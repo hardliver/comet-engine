@@ -1,19 +1,32 @@
 // engine.c — 引擎主體的實作
 
 #include "engine.h"
+#include "gfx.h"
+#include "script.h"
 
 static uint32_t frame_count = 0;
 
 void engine_init(void)
 {
     frame_count = 0;
-    game_init();
+    gfx_cls(0);
+}
+
+int engine_load(const char *src, size_t len)
+{
+    frame_count = 0;
+    // "=game"：錯誤訊息裡的檔名，例如 "game:12: attempt to call a nil value"
+    return script_load(src, len, "=game");
 }
 
 void engine_frame(void)
 {
-    game_update();   // 先更新狀態
-    game_draw();     // 再畫出來
+    if (script_failed()) {
+        gfx_cls(8);   // 遊戲出錯：整個畫面變紅，錯誤訊息看平台的輸出
+    } else {
+        script_call("_update");   // 先更新狀態
+        script_call("_draw");     // 再畫出來
+    }
     frame_count++;
 }
 

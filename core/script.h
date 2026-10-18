@@ -1,0 +1,22 @@
+// script.h — 執行 Lua 遊戲
+// 遊戲是一個 Lua 文字檔，裡面寫三個函式（都可以省略）：
+//   _init()    開始時一次
+//   _update()  每幀一次：讀按鍵、改狀態
+//   _draw()    每幀一次：畫出目前狀態
+
+#ifndef SCRIPT_H
+#define SCRIPT_H
+
+#include <stddef.h>
+
+// 載入並執行遊戲原始碼（會先關掉上一款遊戲）。
+// name 是錯誤訊息裡顯示的檔名。成功回傳 0
+int script_load(const char *src, size_t len, const char *name);
+
+// 呼叫遊戲裡名叫 fn 的全域函式；不存在就跳過
+void script_call(const char *fn);
+
+// 遊戲是否出錯（出錯後就不再呼叫遊戲）
+int script_failed(void);
+
+#endif

@@ -2,9 +2,15 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<!-- user-scalable=no：手機連點時不要放大網頁 -->
+<!-- user-scalable=no：手機連點時不要放大網頁
+     viewport-fit=cover：全螢幕時延伸到瀏海、圓角區域 -->
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<!-- iPhone：從主畫面開啟時，不顯示 Safari 的網址列 -->
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#111111">
+<link rel="manifest" href="manifest.webmanifest">
 <title>Comet</title>
 <style>
   * { box-sizing: border-box; }
@@ -44,6 +50,35 @@
 
   .help { text-align: center; line-height: 1.6; margin: 0; }
 
+  /* ---- 工具列：全螢幕、配置切換 ---- */
+  .toolbar { display: flex; gap: 8px; }
+  #btn-layout { display: none; }   /* 觸控配置只有手機需要 */
+  .toolbar button {
+    font: inherit;
+    font-size: 12px;
+    padding: 5px 10px;
+    border: 1px solid #333;
+    border-radius: 12px;
+    background: #1a1a1a;
+    color: #999;
+  }
+  .hint {
+    display: none;
+    position: fixed;
+    left: 50%;
+    top: 30%;
+    transform: translateX(-50%);
+    max-width: 80vw;
+    padding: 14px 18px;
+    border-radius: 10px;
+    background: #222;
+    color: #ddd;
+    line-height: 1.6;
+    text-align: center;
+    z-index: 10;
+  }
+  .hint.show { display: block; }
+
   /* ---- 觸控按鈕：預設隱藏，只有觸控裝置才顯示 ---- */
   .controls { display: none; }
 
@@ -54,17 +89,35 @@
     border-radius: 50%;
     background: #222;
   }
-  /* 十字鍵的十字形狀，只是外觀，判斷方向是用手指離中心的位置 */
-  .pad::before, .pad::after {
+
+  /* 紅白機配置：十字鍵 */
+  .pad .cross { position: absolute; inset: 0; }
+  .pad .cross::before, .pad .cross::after {
     content: "";
     position: absolute;
     background: #444;
     border-radius: 6px;
   }
-  .pad::before { left: 50px; top: 15px; width: 50px; height: 120px; }
-  .pad::after  { left: 15px; top: 50px; width: 120px; height: 50px; }
+  .pad .cross::before { left: 50px; top: 15px; width: 50px; height: 120px; }
+  .pad .cross::after  { left: 15px; top: 50px; width: 120px; height: 50px; }
 
-  .ab { display: flex; gap: 14px; align-items: center; transform: rotate(-20deg); }
+  /* 現代配置：類比搖桿的圓頭，位置由 JavaScript 跟著手指移動 */
+  .pad .knob {
+    display: none;
+    position: absolute;
+    left: 45px;
+    top: 45px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: #555;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  }
+  body.layout-modern .pad .cross { display: none; }
+  body.layout-modern .pad .knob  { display: block; }
+  .pad.active .cross::before, .pad.active .cross::after { background: #555; }
+
+  .ab { display: flex; gap: 14px; align-items: center; }
   .round {
     width: 66px;
     height: 66px;
@@ -77,7 +130,12 @@
     align-items: center;
     justify-content: center;
   }
-  .round.b { margin-top: 36px; }
+  /* 紅白機配置：B、A 橫排，紅色圓鈕 */
+  body.layout-nes .round { background: #8a1c1c; color: #eee; }
+  /* 現代配置：A 在下、B 在右上，像 Xbox 手把的右手區 */
+  body.layout-modern .ab { flex-direction: row; align-items: flex-end; }
+  body.layout-modern .round.a { order: -1; }
+  body.layout-modern .round.b { margin-bottom: 52px; }
 
   .menu { display: flex; gap: 12px; }
   .pill {
@@ -93,7 +151,13 @@
   /* 觸控裝置（手指這種「粗」的指標） */
   @media (pointer: coarse) {
     .help { display: none; }
-    body { justify-content: flex-start; padding-top: env(safe-area-inset-top); }
+    #btn-layout { display: inline-block; }
+    body {
+      justify-content: flex-start;
+      gap: 10px;
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
 
     /* 直拿：畫面在上，按鈕在下 */
     canvas { width: 100vw; }
@@ -138,20 +202,43 @@
       pointer-events: none;   /* 中間空白處不要擋到畫面 */
     }
     .menu .pill { pointer-events: auto; }
+    /* 工具列放左上、右上角 */
+    .toolbar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      top: 8px;
+      justify-content: flex-start;
+      padding: 0 calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left));
+      pointer-events: none;
+    }
+    .toolbar button { pointer-events: auto; }
+    #btn-layout { margin-left: auto; }   /* 配置切換放右上角 */
   }
 </style>
 </head>
-<body>
+<body class="layout-nes">
 <canvas id="screen" width="320" height="240"></canvas>
 
 <p class="help">
   方向鍵移動　Z = A　X = B　Enter = Start　右 Shift = Select<br>
+  可以把 .lua 遊戲檔拖進這個網頁<br>
   畫面左下 8 格依序是：左 右 上 下 A B Start Select，按著會亮<br>
   <span id="pad-info">沒有偵測到手把（接上後要先按一個鍵，瀏覽器才會看到）</span>
 </p>
 
+<div class="toolbar">
+  <button id="btn-fullscreen">全螢幕</button>
+  <button id="btn-load">載入遊戲</button>
+  <button id="btn-layout">配置：紅白機</button>
+</div>
+<input type="file" id="file-picker" accept=".lua,text/plain" hidden>
+
 <div class="controls">
-  <div class="pad" id="dpad"></div>
+  <div class="pad" id="dpad">
+    <div class="cross"></div>
+    <div class="knob" id="knob"></div>
+  </div>
   <div class="menu">
     <div class="pill" data-btn="7">SELECT</div>
     <div class="pill" data-btn="6">START</div>
@@ -161,6 +248,8 @@
     <div class="round a" data-btn="4">A</div>
   </div>
 </div>
+
+<div class="hint" id="hint"></div>
 
 <script src="main.js"></script>
 </body>
