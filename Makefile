@@ -35,7 +35,9 @@ web: $(SHARED) $(HEADERS) platform/web/index.html platform/web/main.js
 	cp platform/web/index.html platform/web/main.js build/web/
 
 serve: web
-	python3 -m http.server $(PORT) --directory build/web
+	@echo "電腦：http://localhost:$(PORT)"
+	@for i in en0 en1 en2; do ip=$$(ipconfig getifaddr $$i 2>/dev/null) && echo "手機：http://$$ip:$(PORT)"; done; true
+	python3 -m http.server $(PORT) --bind 0.0.0.0 --directory build/web
 
 clean:
 	rm -rf build out.ppm
