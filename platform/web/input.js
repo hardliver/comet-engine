@@ -118,9 +118,20 @@ const PAD_BUTTONS = [
 ];
 const PAD_DEADZONE = 0.15;
 
-export function readGamepad(index) {
+// 目前連著的手把，照瀏覽器給的編號排好，跳過空位。
+// 為什麼不直接用 getGamepads()[0]：瀏覽器的編號是「第幾個插槽」，不是「第幾支手把」。
+// 以前連過的手把、或其他 USB 裝置可能佔掉 0 號，這時唯一的手把會在 1 號或 2 號，
+// 0 號是 null —— gamepad tester 看得到，遊戲卻讀不到。
+// 所以改成「第 n 支連著的手把」= 第 n+1 號玩家。
+export function connectedPads() {
+    if (!navigator.getGamepads) return [];   // 不是 https／localhost 時，瀏覽器不開放手把
+    return [...navigator.getGamepads()].filter((p) => p && p.connected);
+}
+
+// slot：第幾支連著的手把（0 = 第一支），不是瀏覽器的插槽編號
+export function readGamepad(slot) {
     const s = emptyState();
-    const pad = navigator.getGamepads?.()[index];
+    const pad = connectedPads()[slot];
     if (!pad) return s;
 
     for (const [padBtn, btn] of PAD_BUTTONS) {

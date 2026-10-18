@@ -2,7 +2,7 @@
 // 引擎和輸入的細節在 comet.js、input.js；這裡只負責遊玩頁的畫面和按鈕。
 
 import { createEngine, startLoop } from "./comet.js";
-import { setupKeyboard, setupTouch, readGamepad, merge } from "./input.js";
+import { setupKeyboard, setupTouch, readGamepad, connectedPads, merge } from "./input.js";
 import { setupTouchpad } from "./touchpad.js";
 
 // ---- 提示框：顯示幾秒後自動收起 ----
@@ -90,20 +90,28 @@ document.addEventListener("webkitfullscreenchange", onFullscreenChange);
 window.addEventListener("contextmenu", (e) => e.preventDefault());
 
 // ---- 手把資訊（除錯用）----
+// 列出所有連著的手把，標出各是幾號玩家。
+// mapping 不是 "standard" 時，按鍵位置可能和上面的對照表不同，要另外處理
 const padInfo = document.getElementById("pad-info");
-window.addEventListener("gamepadconnected", (e) => {
-    padInfo.textContent =
-        `手把 ${e.gamepad.index + 1}：${e.gamepad.id}（配置：${e.gamepad.mapping || "非標準"}）`;
-});
-window.addEventListener("gamepaddisconnected", () => {
-    padInfo.textContent = "沒有偵測到手把（接上後要先按一個鍵，瀏覽器才會看到）";
-});
+function showPads() {
+    if (!window.isSecureContext) {
+        padInfo.textContent = "這個網址不是 https 或 localhost，瀏覽器不開放手把（請用 http://localhost:8420）";
+        return;
+    }
+    const pads = connectedPads();
+    padInfo.textContent = pads.length === 0
+        ? "沒有偵測到手把（接上後要先按一個鍵，瀏覽器才會看到）"
+        : pads.map((p, i) => `${i + 1}P：${p.id}（${p.mapping || "非標準配置"}）`).join("　");
+}
+window.addEventListener("gamepadconnected", showPads);
+window.addEventListener("gamepaddisconnected", showPads);
+showPads();
 
 // ---- 啟動 ----
 const keyboard = setupKeyboard();
 const touch = setupTouch(document);
 
-// 1 號玩家：鍵盤、觸控、第 1 支手把都能控制；2–4 號玩家：第 2–4 支手把
+// 1 號玩家：鍵盤、觸控、第 1 支連著的手把都能控制；2–4 號玩家：第 2–4 支
 function getInput(player) {
     if (player === 0) return merge(keyboard(), touch(), readGamepad(0));
     return readGamepad(player);
