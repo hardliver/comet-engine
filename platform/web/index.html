@@ -2,36 +2,166 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- user-scalable=no：手機連點時不要放大網頁 -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>Comet</title>
 <style>
-  body {
+  * { box-sizing: border-box; }
+
+  html, body {
     margin: 0;
-    min-height: 100vh;
+    height: 100%;
+    background: #111;
+    color: #aaa;
+    font-family: system-ui, sans-serif;
+    font-size: 14px;
+    /* 手機上：不要捲動、不要選取文字、不要長按跳出選單 */
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: none;
+  }
+
+  body {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 16px;
-    background: #111;
-    color: #aaa;
-    font-family: system-ui, sans-serif;
-    font-size: 14px;
   }
-  /* canvas 本身是 320×240，用 CSS 放大 2 倍。
-     pixelated：放大時不要模糊，保持一格一格的像素 */
+
+  /* canvas 本身是 320×240，用 CSS 放大。
+     pixelated：放大時不要模糊，保持一格一格的像素
+     寬度最多 640px，視窗比較小時跟著縮，維持 4:3 */
   canvas {
-    width: 640px;
-    height: 480px;
+    width: min(640px, 100vw);
+    aspect-ratio: 4 / 3;
     image-rendering: pixelated;
+    display: block;
+  }
+
+  .help { text-align: center; line-height: 1.6; margin: 0; }
+
+  /* ---- 觸控按鈕：預設隱藏，只有觸控裝置才顯示 ---- */
+  .controls { display: none; }
+
+  .pad {
+    position: relative;
+    width: 150px;
+    height: 150px;
+    border-radius: 50%;
+    background: #222;
+  }
+  /* 十字鍵的十字形狀，只是外觀，判斷方向是用手指離中心的位置 */
+  .pad::before, .pad::after {
+    content: "";
+    position: absolute;
+    background: #444;
+    border-radius: 6px;
+  }
+  .pad::before { left: 50px; top: 15px; width: 50px; height: 120px; }
+  .pad::after  { left: 15px; top: 50px; width: 120px; height: 50px; }
+
+  .ab { display: flex; gap: 14px; align-items: center; transform: rotate(-20deg); }
+  .round {
+    width: 66px;
+    height: 66px;
+    border-radius: 50%;
+    background: #444;
+    color: #ddd;
+    font-size: 20px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .round.b { margin-top: 36px; }
+
+  .menu { display: flex; gap: 12px; }
+  .pill {
+    padding: 6px 14px;
+    border-radius: 14px;
+    background: #333;
+    color: #bbb;
+    font-size: 12px;
+  }
+
+  .pressed { background: #ffa300 !important; color: #111 !important; }
+
+  /* 觸控裝置（手指這種「粗」的指標） */
+  @media (pointer: coarse) {
+    .help { display: none; }
+    body { justify-content: flex-start; padding-top: env(safe-area-inset-top); }
+
+    /* 直拿：畫面在上，按鈕在下 */
+    canvas { width: 100vw; }
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      grid-template-areas: "pad menu ab";
+      align-items: center;
+      width: 100%;
+      padding: 0 16px;
+      flex: 1;
+    }
+    .pad  { grid-area: pad;  justify-self: start; }
+    .menu { grid-area: menu; flex-direction: column; }
+    .ab   { grid-area: ab;   justify-self: end; }
+  }
+
+  /* 橫拿：畫面在中間，十字鍵在左、AB 在右 */
+  @media (pointer: coarse) and (orientation: landscape) {
+    body {
+      flex-direction: row;
+      justify-content: center;
+      padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
+    }
+    canvas {
+      width: auto;
+      height: 100vh;
+      max-width: calc(100vw - 340px);
+      object-fit: contain;
+    }
+    .controls { display: contents; }
+    .pad  { order: -1; }
+    /* SELECT 放左下角、START 放右下角，不蓋到遊戲畫面 */
+    .menu {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 10px;
+      flex-direction: row;
+      justify-content: space-between;
+      padding: 0 calc(16px + env(safe-area-inset-right)) 0 calc(16px + env(safe-area-inset-left));
+      pointer-events: none;   /* 中間空白處不要擋到畫面 */
+    }
+    .menu .pill { pointer-events: auto; }
   }
 </style>
 </head>
 <body>
 <canvas id="screen" width="320" height="240"></canvas>
-<p>方向鍵移動　Z = A　X = B　Enter = Start　右 Shift = Select<br>
-畫面左下 8 格依序是：左 右 上 下 A B Start Select，按著會亮</p>
-<p id="pad-info">沒有偵測到手把（接上後要先按一個鍵，瀏覽器才會看到）</p>
+
+<p class="help">
+  方向鍵移動　Z = A　X = B　Enter = Start　右 Shift = Select<br>
+  畫面左下 8 格依序是：左 右 上 下 A B Start Select，按著會亮<br>
+  <span id="pad-info">沒有偵測到手把（接上後要先按一個鍵，瀏覽器才會看到）</span>
+</p>
+
+<div class="controls">
+  <div class="pad" id="dpad"></div>
+  <div class="menu">
+    <div class="pill" data-btn="7">SELECT</div>
+    <div class="pill" data-btn="6">START</div>
+  </div>
+  <div class="ab">
+    <div class="round b" data-btn="5">B</div>
+    <div class="round a" data-btn="4">A</div>
+  </div>
+</div>
+
 <script src="main.js"></script>
 </body>
 </html>

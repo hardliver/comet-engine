@@ -29,4 +29,4 @@ make serve      # 網頁版：瀏覽器開 http://localhost:8420
 
 - 畫面格式 320×240、8-bit 調色盤為暫定，規格 v0.1 才凍結
 - 同一串按鍵，Mac 版與網頁版輸出逐像素相同
-- 網頁鍵盤：方向鍵、Z = A、X = B、Enter = Start、右 Shift = Select
+- 網頁輸入：鍵盤（方向鍵、Z = A、X = B、Enter = Start、右 Shift = Select）、Gamepad API 手把（最多 4 支）、手機觸控按鈕（直拿、橫拿都支援）

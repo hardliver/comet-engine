@@ -73,6 +73,76 @@ function readGamepad(index) {
     return b;
 }
 
+// ---- 觸控按鈕 ----
+// 和鍵盤一樣，最後只是設定 bit，遊戲分不出來是哪一種輸入。
+// 用 pointer 事件（同時支援手指和滑鼠），每根手指有自己的 pointerId，
+// 所以可以一手按十字鍵、一手按 A。
+
+let dpadBits = 0;                 // 十字鍵目前的方向
+const buttonPointers = new Map(); // 哪根手指按著哪個按鍵
+
+function touchKeys() {
+    let b = dpadBits;
+    for (const btn of buttonPointers.values()) b |= (1 << btn);
+    return b;
+}
+
+// 十字鍵：看手指離中心往哪個方向偏，可以斜按，也可以按著滑動換方向
+function setupDpad(el) {
+    let activePointer = null;
+
+    function update(e) {
+        const r = el.getBoundingClientRect();
+        const dx = e.clientX - (r.left + r.width / 2);
+        const dy = e.clientY - (r.top + r.height / 2);
+        const dead = r.width * 0.15;    // 中心一小圈不算任何方向
+        let b = 0;
+        if (dx < -dead) b |= (1 << BTN.LEFT);
+        if (dx >  dead) b |= (1 << BTN.RIGHT);
+        if (dy < -dead) b |= (1 << BTN.UP);
+        if (dy >  dead) b |= (1 << BTN.DOWN);
+        dpadBits = b;
+    }
+    function release(e) {
+        if (e.pointerId !== activePointer) return;
+        activePointer = null;
+        dpadBits = 0;
+    }
+
+    el.addEventListener("pointerdown", (e) => {
+        activePointer = e.pointerId;
+        el.setPointerCapture(e.pointerId);  // 手指滑出十字鍵也繼續追蹤
+        update(e);
+    });
+    el.addEventListener("pointermove", (e) => {
+        if (e.pointerId === activePointer) update(e);
+    });
+    el.addEventListener("pointerup", release);
+    el.addEventListener("pointercancel", release);
+}
+
+// A、B、Start、Select：按下就設定，放開就清除
+function setupButton(el) {
+    const btn = Number(el.dataset.btn);
+    el.addEventListener("pointerdown", (e) => {
+        buttonPointers.set(e.pointerId, btn);
+        el.setPointerCapture(e.pointerId);
+        el.classList.add("pressed");
+    });
+    const release = (e) => {
+        buttonPointers.delete(e.pointerId);
+        el.classList.remove("pressed");
+    };
+    el.addEventListener("pointerup", release);
+    el.addEventListener("pointercancel", release);
+}
+
+setupDpad(document.getElementById("dpad"));
+document.querySelectorAll("[data-btn]").forEach(setupButton);
+
+// 長按不要跳出選單
+window.addEventListener("contextmenu", (e) => e.preventDefault());
+
 // 在網頁上顯示偵測到的手把，方便除錯
 const padInfo = () => document.getElementById("pad-info");
 window.addEventListener("gamepadconnected", (e) => {
@@ -126,8 +196,8 @@ async function start() {
         if (acc > 250) acc = 250;
 
         while (acc >= FRAME_MS) {
-            // 1 號玩家：鍵盤和第 1 支手把都能控制
-            engine.input_set(0, keys | readGamepad(0));
+            // 1 號玩家：鍵盤、觸控、第 1 支手把都能控制
+            engine.input_set(0, keys | touchKeys() | readGamepad(0));
             // 2–4 號玩家：第 2–4 支手把
             for (let p = 1; p < 4; p++) {
                 engine.input_set(p, readGamepad(p));
