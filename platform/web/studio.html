@@ -63,8 +63,10 @@
   /* ---- 地圖編輯器（mapedit.js）---- */
   #mapedit { flex: 1; min-height: 0; display: flex; flex-direction: column; outline: none; }
   #mapedit[hidden] { display: none; }
-  .me-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 10px;
-            border-bottom: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  /* 工具列永遠只有一行（放不下就左右捲動）：換行的話，按鈕文字一變，下面的地圖就會上下跳 */
+  .me-bar { display: flex; flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; align-items: center; gap: 4px 8px;
+            padding: 6px 10px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 13px; flex-shrink: 0; }
+  .me-bar > * { flex-shrink: 0; }
   .me-bar button { padding: 3px 8px; }
   .me-bar button.on { background: var(--accent); border-color: var(--accent); color: #111; }
   .me-bar input[type=number] { width: 52px; }
@@ -77,6 +79,12 @@
   .me-side-bar { display: flex; gap: 6px; padding: 6px; }
   .me-side-bar select { flex: 1; min-width: 0; }
   .me-pal-wrap { flex: 1; min-height: 0; overflow: auto; padding: 0 6px; }
+  .me-obj { padding: 8px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .me-obj[hidden] { display: none; }
+  .me-obj-hint { color: var(--muted); }
+  .me-obj-title { display: flex; justify-content: space-between; align-items: center; color: #fff; font-weight: 600; }
+  .me-obj-row { display: grid; grid-template-columns: 9em minmax(0, 1fr) auto; gap: 6px; align-items: center; color: var(--muted); }
+  .me-obj-row textarea, .me-obj-row input, .me-obj-row select { width: 100%; box-sizing: border-box; }
   .me-status { padding: 6px 8px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); }
   .single-only { display: contents; }
   body.folder-mode .single-only { display: none; }

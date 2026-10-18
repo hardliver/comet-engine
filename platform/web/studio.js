@@ -369,7 +369,9 @@ function currentCart() {
     const texts = {};
     for (const [path, f] of folder.files) texts[path] = f.text;
     if (folder.mapsError) throw new Error(folder.mapsError);   // 地圖檔格式有錯：顯示原因，不執行
-    const { code, segments } = buildCart(folder.project, texts, folder.imagesCode, fontFor(texts), folder.mapsCode);
+    // 字型也要掃描地圖物件裡的字（例如告示牌的內容）
+    const fontCode = fontFor({ ...texts, "(maps)": folder.mapsCode });
+    const { code, segments } = buildCart(folder.project, texts, folder.imagesCode, fontCode, folder.mapsCode);
     folder.segments = segments;
     folder.cart = code;
     return code;
@@ -577,7 +579,7 @@ async function openFile(path) {
     $("mapedit").hidden = !isMap;
     if (isMap) {
         try {
-            await mapEditor.open(path, folder.maps.get(path).text, projectImages());
+            await mapEditor.open(path, folder.maps.get(path).text, projectImages(), Object.keys(folder.project.maps || {}));
             mapEditor.focus();
         } catch (e) {
             toast(`地圖打不開：${e.message}`, 6000);

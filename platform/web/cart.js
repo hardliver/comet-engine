@@ -97,6 +97,10 @@ export async function buildImages(project, readBytes, inflate) {
 //   {
 //     "width": 40, "height": 30,
 //     "tilesets": ["town", "dungeon"],        ← 用 comet.json images 裡的哪幾張圖
+//     "objects": [                             ← 可以省略
+//       {"type": "npc", "x": 19, "y": 11, "name": "elder", "tile": 217, "talk": "elder"},
+//       {"type": "sign", "x": 5, "y": 3, "text": "新芽營地"}
+//     ],
 //     "layers": {
 //       "ground": [[1, 1, 2, ...], ...],       ← height 列，每列 width 個格子編號
 //       "deco":   [[0, 0, 17, ...], ...],
@@ -106,6 +110,16 @@ export async function buildImages(project, readBytes, inflate) {
 // 格子編號：0 = 空的；第 1 張圖的第 0 格 = 1，第 n 格 = n + 1；
 // 第 2 張圖接在第 1 張的最後一格後面（Tiny Town 132 格 → Tiny Dungeon 的第 0 格是 133）。
 // 每一列寫成一行，用 git 看差異時一眼就知道改了哪一列。
+//
+// objects：地圖上的物件（NPC、告示牌、門……）。每個都有 type、x、y（第幾欄、第幾列），
+// 其他欄位自由，值只能是文字或整數。遊戲裡用 MAPOBJ.camp 取得（一般的 Lua 表格陣列）。
+
+// 文字 → Lua 字串。JSON.stringify 的跳脫方式和 Lua 不完全一樣（例如 \u0001），自己處理：
+// \ " 換行 Tab 用 Lua 的寫法，其他控制字元寫成 \ddd（十進位）
+const LUA_ESCAPES = { "\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t" };
+function luaString(s) {
+    return '"' + s.replace(/[\\"\x00-\x1f]/g, (c) => LUA_ESCAPES[c] ?? "\\" + String(c.charCodeAt(0)).padStart(3, "0")) + '"';
+}
 
 export function mapEntries(project) {
     return Object.entries(project.maps || {}).map(([name, file]) => ({ name, file }));
@@ -124,6 +138,20 @@ function checkMap(m, file, project) {
         if (!(project.images && t in project.images)) bad(`tilesets 裡的「${t}」不在 comet.json 的 images 裡`);
     }
     if (!m.layers || typeof m.layers !== "object" || Object.keys(m.layers).length === 0) bad("至少要有一個圖層（layers）");
+    if (m.objects !== undefined) {
+        if (!Array.isArray(m.objects)) bad("objects 要是陣列");
+        m.objects.forEach((o, i) => {
+            const where = `第 ${i + 1} 個物件`;
+            if (!o || typeof o.type !== "string" || !o.type) bad(`${where}沒有 type`);
+            if (!Number.isInteger(o.x) || !Number.isInteger(o.y) || o.x < 0 || o.y < 0 || o.x >= m.width || o.y >= m.height) {
+                bad(`${where}（${o.type}）的 x、y 要在地圖範圍內`);
+            }
+            for (const [k, v] of Object.entries(o)) {
+                if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) bad(`${where}的欄位名稱「${k}」只能用英文、數字、底線`);
+                if (typeof v !== "string" && !Number.isInteger(v)) bad(`${where}的 ${k} 只能是文字或整數`);
+            }
+        });
+    }
     for (const [name, rows] of Object.entries(m.layers)) {
         if (!/^[A-Za-z_][A-Za-z0-9_]{0,14}$/.test(name)) bad(`圖層名稱「${name}」只能用英文、數字、底線，最多 15 個字`);
         if (!Array.isArray(rows) || rows.length !== m.height) bad(`圖層 ${name} 要有 ${m.height} 列`);
@@ -144,6 +172,7 @@ export async function buildMaps(project, readText) {
     const lines = [
         "-- ==================== 地圖（comet.json 的 maps，自動產生） ====================",
         "MAP = {}",
+        "MAPOBJ = {}",
     ];
     for (const e of entries) {
         let m;
@@ -162,6 +191,10 @@ export async function buildMaps(project, readText) {
         });
         const sets = m.tilesets.map((t) => `IMG[${JSON.stringify(t)}]`).join(", ");
         lines.push(`MAP[${JSON.stringify(e.name)}] = newmap(${m.width}, ${m.height}, { ${sets} }, { ${layers.join(", ")} })`);
+        // 物件：每個一行 Lua 表格，例如 { type = "npc", x = 19, y = 11, name = "elder" }
+        const objs = (m.objects || []).map((o) =>
+            "  { " + Object.entries(o).map(([k, v]) => `${k} = ${typeof v === "string" ? luaString(v) : v}`).join(", ") + " },");
+        lines.push(`MAPOBJ[${JSON.stringify(e.name)}] = {`, ...objs, "}");
     }
     return lines.join("\n");
 }

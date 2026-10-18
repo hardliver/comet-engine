@@ -181,6 +181,27 @@ end
 - 一格的大小就是圖片的小格大小（通常 16 × 16）
 - `mset` 只改記憶體裡的地圖，不會存檔；重新開始遊戲就恢復原狀
 
+#### 地圖物件
+
+地圖上的 NPC、告示牌、門等「物件」在地圖編輯器裡放，遊戲裡用 `MAPOBJ.地圖名` 取得，是一般的 Lua 表格陣列。
+每個物件都有 `type`、`x`、`y`（第幾欄、第幾列，不是像素），其他欄位依種類而定：
+
+```lua
+for _, o in ipairs(MAPOBJ.camp) do
+  if o.type == "npc" then
+    -- o.name、o.tile（地圖的格子編號）、o.talk
+  elseif o.type == "sign" then
+    -- o.text
+  elseif o.type == "door" then
+    -- o.to（地圖名）、o.tx、o.ty（到達的第幾欄、第幾列）
+  end
+end
+```
+
+- 物件的種類：`npc`、`sign`（告示牌）、`door`（門）、`block`（擋路物：`tile`、`need`）、`start`（起點）
+- 物件的文字（告示牌內容等）也會收進字型，可以直接 `text()` 畫出來
+- 像素位置 = 第幾格 × 16
+
 ### 圖片
 
 圖片放在專案資料夾，在 `comet.json` 的 `images` 列出來，合併時會自動轉換：

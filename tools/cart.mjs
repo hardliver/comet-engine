@@ -31,7 +31,8 @@ const imagesCode = await buildImages(
 
 const mapsCode = await buildMaps(project, async (p) => fs.readFileSync(path.join(dir, p), "utf8"));
 
-const font = buildFont(files, new Uint8Array(fs.readFileSync(FONT)));
+// 字型也要掃描地圖物件裡的字（例如告示牌的內容）
+const font = buildFont({ ...files, "(maps)": mapsCode }, new Uint8Array(fs.readFileSync(FONT)));
 const { code, segments } = buildCart(project, files, imagesCode, font.code, mapsCode);
 const out = path.join(dir, project.output || "build/game.lua");
 fs.mkdirSync(path.dirname(out), { recursive: true });
