@@ -55,7 +55,7 @@ web: $(SHARED) $(HEADERS) $(wildcard platform/web/*) $(wildcard games/*.lua) doc
 serve: web
 	@echo "電腦：http://localhost:$(PORT)"
 	@for i in en0 en1 en2; do ip=$$(ipconfig getifaddr $$i 2>/dev/null) && echo "手機：http://$$ip:$(PORT)"; done; true
-	python3 -m http.server $(PORT) --bind 0.0.0.0 --directory build/web
+	python3 tools/serve.py $(PORT) build/web
 
 # 文字測試用的遊戲檔：要經過合併工具才會有字型
 build/text_test.lua: tests/text/comet.json tests/text/main.lua fonts/c11.bin platform/web/font.js platform/web/cart.js

@@ -903,7 +903,7 @@ function markdownToHtml(md) {
             }
             out.push(`<pre>${esc(body.join("\n"))}</pre>`);
             i++;
-        } else if (/^#{1,3} /.test(t)) {                     // 標題
+        } else if (/^#{1,6} /.test(t)) {                     // 標題（# 到 ######）
             const level = t.indexOf(" ");
             out.push(`<h${level}>${inline(t.slice(level + 1))}</h${level}>`);
             i++;
@@ -927,7 +927,11 @@ function markdownToHtml(md) {
         } else if (t === "" || t === "---") {
             i++;
         } else {                                             // 段落
-            const para = [];
+            // 第一行一定收（不管它長怎樣），之後遇到其他格式的開頭才停。
+            // 少了這一步，一行以 # 開頭、但又不是標題的字（例如 ####### 或 #標籤）
+            // 會讓這裡一行都不收、i 也不前進，外面的迴圈就永遠卡在同一行
+            const para = [t];
+            i++;
             while (i < lines.length && lines[i].trim() !== "" && !/^(```|#|\||- |\d+\. )/.test(lines[i].trim())) {
                 para.push(lines[i].trim());
                 i++;
