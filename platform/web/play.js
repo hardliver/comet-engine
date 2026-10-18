@@ -37,6 +37,13 @@ document.getElementById("btn-layout").addEventListener("click", () => {
     applyLayout(layout === "nes" ? "modern" : "nes");
 });
 
+// ---- ☰ 選單（手機）----
+const menu = document.getElementById("menu");
+const closeMenu = () => menu.classList.remove("show");
+document.getElementById("btn-menu").addEventListener("click", () => menu.classList.toggle("show"));
+document.getElementById("btn-close-menu").addEventListener("click", closeMenu);
+menu.addEventListener("click", (e) => { if (e.target.id !== "btn-close-menu" && e.target.tagName === "BUTTON") setTimeout(closeMenu, 150); });
+
 // ---- 全螢幕 ----
 // Android：瀏覽器支援 Fullscreen API，按一下就全螢幕，並嘗試鎖定橫向。
 // iPhone：Safari 不讓網頁全螢幕，唯一的方法是「加入主畫面」。
@@ -114,6 +121,7 @@ function loadFile(file) {
 }
 const picker = document.getElementById("file-picker");
 document.getElementById("btn-load").addEventListener("click", () => picker.click());
+document.getElementById("btn-load-touch").addEventListener("click", () => picker.click());
 picker.addEventListener("change", () => {
     if (picker.files[0]) loadFile(picker.files[0]);
     picker.value = "";

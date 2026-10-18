@@ -173,9 +173,10 @@ function offsetFromCenter(el, e) {
 export function setupTouch(root) {
     const state = emptyState();
     let dpadBits = 0;
-    const buttonPointers = new Map();   // 哪根手指按著哪個按鍵
+    const buttonPointers = new Map();   // 哪根手指按著哪個按鍵（Select、Start、L、R）
+    const facePointers = new Map();     // 哪根手指按著 A B X Y 的哪一顆
 
-    // 十字鍵
+    // ---- 十字鍵 ----
     const dpad = root.querySelector("#dpad");
     if (dpad) {
         trackPointer(dpad, (e) => {
@@ -190,28 +191,121 @@ export function setupTouch(root) {
         }, () => { dpadBits = 0; });
     }
 
-    // 搖桿：圓頭跟著手指移動，最多移到底座邊緣
-    function setupStick(el, keyX, keyY) {
-        if (!el) return;
-        const knob = el.querySelector(".knob");
-        trackPointer(el, (e) => {
-            const [x, y] = offsetFromCenter(el, e);
-            [state[keyX], state[keyY]] = toStick(x, y, 0.12);
-            const r = el.getBoundingClientRect();
-            const len = Math.hypot(x, y);
-            const k = len > 1 ? 1 / len : 1;
-            const travel = r.width * 0.3;   // 圓頭中心最多離底座中心多遠（px）
-            knob.style.transform = `translate(${x * k * travel}px, ${y * k * travel}px)`;
+    // 手指位置 → 搖桿值。center 是搖桿中心（螢幕座標），radius 是底座半徑（px）
+    function stickValue(e, center, radius) {
+        return toStick((e.clientX - center.x) / radius, (e.clientY - center.y) / radius, 0.12);
+    }
+    function moveKnob(knob, e, center, radius) {
+        let dx = e.clientX - center.x;
+        let dy = e.clientY - center.y;
+        const len = Math.hypot(dx, dy);
+        const max = radius * 0.6;   // 圓頭最多移到這麼遠
+        if (len > max) { dx *= max / len; dy *= max / len; }
+        knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    }
+
+    // ---- 左搖桿：浮動式 ----
+    // 在左區任何空白處按下（不是十字鍵、不是小按鈕），搖桿就移到手指下面
+    const lstick = root.querySelector("#lstick");
+    const leftZone = root.querySelector("#left-zone");
+    if (lstick && leftZone) {
+        const knob = lstick.querySelector(".knob");
+        let active = null, center = null, radius = 0;
+
+        leftZone.addEventListener("pointerdown", (e) => {
+            if (active !== null) return;
+            if (e.target.closest("#dpad, .pill")) return;
+            if (getComputedStyle(lstick).display === "none") return;   // 紅白機配置沒有搖桿
+            active = e.pointerId;
+            leftZone.setPointerCapture(e.pointerId);
+
+            // 把底座移到手指的位置（座標相對於它的父元素）
+            const parent = lstick.offsetParent.getBoundingClientRect();
+            const r = lstick.getBoundingClientRect();
+            radius = r.width / 2;
+            lstick.style.left = `${e.clientX - parent.left - radius}px`;
+            lstick.style.top = `${e.clientY - parent.top - radius}px`;
+            lstick.style.bottom = "auto";
+            center = { x: e.clientX, y: e.clientY };
+            lstick.classList.add("active");
+            [state.lx, state.ly] = [0, 0];
+        });
+        leftZone.addEventListener("pointermove", (e) => {
+            if (e.pointerId !== active) return;
+            [state.lx, state.ly] = stickValue(e, center, radius);
+            moveKnob(knob, e, center, radius);
+        });
+        const release = (e) => {
+            if (e.pointerId !== active) return;
+            active = null;
+            state.lx = state.ly = 0;
+            knob.style.transform = "";
+            lstick.style.left = lstick.style.top = lstick.style.bottom = "";   // 回到原位
+            lstick.classList.remove("active");
+        };
+        leftZone.addEventListener("pointerup", release);
+        leftZone.addEventListener("pointercancel", release);
+    }
+
+    // ---- 右搖桿：固定位置 ----
+    const rstick = root.querySelector("#rstick");
+    if (rstick) {
+        const knob = rstick.querySelector(".knob");
+        trackPointer(rstick, (e) => {
+            const r = rstick.getBoundingClientRect();
+            const center = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+            [state.rx, state.ry] = stickValue(e, center, r.width / 2);
+            moveKnob(knob, e, center, r.width / 2);
         }, () => {
-            state[keyX] = 0;
-            state[keyY] = 0;
+            state.rx = state.ry = 0;
             knob.style.transform = "";
         });
     }
-    setupStick(root.querySelector("#lstick"), "lx", "ly");
-    setupStick(root.querySelector("#rstick"), "rx", "ry");
 
-    // 按鈕
+    // ---- A B X Y：離手指最近的那一顆 ----
+    const face = root.querySelector("#face");
+    if (face) {
+        const rounds = [...face.querySelectorAll("[data-face]")];
+
+        function nearest(e) {
+            let best = null, bestDist = Infinity;
+            for (const el of rounds) {
+                if (el.offsetParent === null) continue;   // 隱藏的（紅白機沒有 X、Y）
+                const r = el.getBoundingClientRect();
+                const d = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+                if (d < bestDist && d < r.width) { best = el; bestDist = d; }
+            }
+            return best;
+        }
+        function refresh() {
+            const on = new Set(facePointers.values());
+            for (const el of rounds) el.classList.toggle("pressed", on.has(el));
+        }
+        face.addEventListener("pointerdown", (e) => {
+            const el = nearest(e);
+            if (!el) return;
+            face.setPointerCapture(e.pointerId);
+            facePointers.set(e.pointerId, el);
+            refresh();
+        });
+        // 按著滑動：滑到別顆就換成那一顆
+        face.addEventListener("pointermove", (e) => {
+            if (!facePointers.has(e.pointerId)) return;
+            const el = nearest(e);
+            if (el && el !== facePointers.get(e.pointerId)) {
+                facePointers.set(e.pointerId, el);
+                refresh();
+            }
+        });
+        const release = (e) => {
+            facePointers.delete(e.pointerId);
+            refresh();
+        };
+        face.addEventListener("pointerup", release);
+        face.addEventListener("pointercancel", release);
+    }
+
+    // ---- 其他按鈕（L、R、Select、Start）----
     root.querySelectorAll("[data-btn]").forEach((el) => {
         const btn = Number(el.dataset.btn);
         el.addEventListener("pointerdown", (e) => {
@@ -230,6 +324,7 @@ export function setupTouch(root) {
     return () => {
         let b = dpadBits;
         for (const btn of buttonPointers.values()) b |= (1 << btn);
+        for (const el of facePointers.values()) b |= (1 << Number(el.dataset.face));
         return { ...state, buttons: b };
     };
 }

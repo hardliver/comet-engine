@@ -13,10 +13,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <title>Comet</title>
 <style>
-  /* 觸控按鈕的大小都用 --u（一個「單位」）表示，--u 會依按鈕區的大小自動縮放，
-     所以畫面最大化之後，兩側剩多少空間，按鈕就縮放到剛好放得下 */
   :root {
-    --side-min: 130px;   /* 橫拿時兩側按鈕區至少多寬 */
+    --side-min: 200px;   /* 橫拿時兩側按鈕區至少多寬：寧可畫面小一點，按鈕也要夠大 */
   }
 
   * { box-sizing: border-box; }
@@ -68,19 +66,17 @@
     text-align: center;
   }
 
-  /* ---- 工具列 ---- */
-  .topbar { display: flex; gap: 8px; align-items: center; justify-content: center; }
-  .topbar button {
+  button.tool {
     font: inherit;
-    font-size: 12px;
-    padding: 5px 10px;
+    font-size: 13px;
+    padding: 6px 12px;
     border: 1px solid #333;
-    border-radius: 12px;
+    border-radius: 14px;
     background: #1a1a1a;
-    color: #999;
+    color: #aaa;
     white-space: nowrap;
   }
-  .touch-only { display: none !important; }
+  .desktop-bar { display: flex; gap: 8px; }
 
   .hint {
     display: none;
@@ -95,29 +91,47 @@
     color: #ddd;
     line-height: 1.6;
     text-align: center;
-    z-index: 10;
+    z-index: 20;
   }
   .hint.show { display: block; }
 
   /* ============================================================
      觸控按鈕
      ============================================================
-     按鈕區（.zone）是「容器」：裡面的 100cqw、100cqh 指的是按鈕區的寬、高。
-     整組按鈕照 200 × 240 個單位設計，--u 取「寬度放得下」和「高度放得下」中較小的。
-     --reserve 是上下要留給 L/R、Select/Start 的空間 */
+     設計原則（以拇指操作為主）：
+     1. 最常用的放在拇指自然停放的地方：左邊的移動、右邊的 A
+        都在下半部、靠外側；比較少用的（十字鍵、右搖桿）放上面、靠畫面那一側
+     2. 按鈕夠大：A B X Y 直徑約 60px 以上（手指按下的寬度約 45px）
+     3. 左搖桿是「浮動式」：在左區下半部任何空白處按下，搖桿中心就在那裡，
+        不用看、也不會按偏
+     4. A B X Y 用「離手指最近的鍵」判斷：按在兩顆中間也算數，按著可以滑到隔壁那顆
+     5. 不常用的功能（載入、全螢幕、換配置）收進「☰」選單
+
+     大小用 --u 表示：整組按鈕照 200 × 300 個單位設計，
+     --u 依按鈕區的寬、高自動縮放（100cqw、100cqh 是按鈕區的寬、高） */
   .zone {
     display: none;
     position: relative;
-    align-self: stretch;
+    align-self: stretch;     /* 撐滿整格：按鈕區沒有撐開的話高度是 0，按鈕全部消失 */
     justify-self: stretch;
     container-type: size;
-    --reserve: 44px;
+    --reserve: 96px;    /* 上方 L/R、下方 Select/Start 要用的高度 */
   }
   .zone > * {
-    --u: min(calc(100cqw / 200), calc((100cqh - var(--reserve)) / 240));
+    --u: min(calc(100cqw / 200), calc((100cqh - var(--reserve)) / 300));
   }
 
-  /* 十字鍵：用百分比畫，底座多大十字就多大 */
+  /* 中間放大按鈕的區域：上方留 48px 給 L/R，下方留 48px 給 Select/Start */
+  .cluster {
+    position: absolute;
+    left: 50%;
+    top: calc(48px + (100cqh - var(--reserve) - var(--u) * 300) / 2);
+    width: calc(var(--u) * 200);
+    height: calc(var(--u) * 300);
+    transform: translateX(-50%);
+  }
+
+  /* ---- 十字鍵 ---- */
   .pad {
     position: absolute;
     border-radius: 50%;
@@ -127,20 +141,19 @@
   .pad .cross::before, .pad .cross::after {
     content: "";
     position: absolute;
-    background: #444;
-    border-radius: 6px;
+    background: #454545;
+    border-radius: 7px;
   }
-  .pad .cross::before { left: 33%; top: 10%; width: 34%; height: 80%; }
-  .pad .cross::after  { left: 10%; top: 33%; width: 80%; height: 34%; }
-  .pad.active .cross::before, .pad.active .cross::after { background: #555; }
+  .pad .cross::before { left: 33%; top: 8%; width: 34%; height: 84%; }
+  .pad .cross::after  { left: 8%; top: 33%; width: 84%; height: 34%; }
+  .pad.active .cross::before, .pad.active .cross::after { background: #5a5a5a; }
 
-  /* 搖桿：底座 + 跟著手指移動的圓頭 */
+  /* ---- 搖桿 ---- */
   .stick {
     position: absolute;
-    width: calc(var(--u) * 100);
-    height: calc(var(--u) * 100);
     border-radius: 50%;
     background: #222;
+    border: 2px solid #2c2c2c;
   }
   .stick .knob {
     position: absolute;
@@ -155,165 +168,132 @@
   }
   .stick.active .knob { background: #ffa300; }
 
-  /* A B X Y：用 grid 排成菱形
-         Y
-       X   B      （和 Xbox 手把的右手區相同）
-         A        */
-  .face {
-    position: absolute;
-    display: grid;
-    grid-template-columns: repeat(3, calc(var(--u) * 44));
-    grid-template-rows: repeat(3, calc(var(--u) * 44));
-    grid-template-areas:
-      ".  y  ."
-      "x  .  b"
-      ".  a  .";
-  }
+  /* ---- A B X Y ---- */
+  .face { position: absolute; }
   .round {
+    position: absolute;
     border-radius: 50%;
     background: #444;
     color: #ddd;
     font-weight: bold;
-    font-size: calc(var(--u) * 17);
     display: flex;
     align-items: center;
     justify-content: center;
+    pointer-events: none;   /* 由 .face 統一判斷按到哪一顆 */
   }
-  .round.a { grid-area: a; }
-  .round.b { grid-area: b; }
-  .round.x { grid-area: x; }
-  .round.y { grid-area: y; }
 
   .pill {
-    padding: 5px 12px;
-    border-radius: 12px;
-    background: #333;
+    position: absolute;
+    min-width: 72px;
+    padding: 9px 14px;
+    border-radius: 16px;
+    background: #2e2e2e;
     color: #bbb;
-    font-size: 12px;
+    font-size: 13px;
     text-align: center;
   }
-  .shoulder { position: absolute; top: 6px; width: 64px; }
-
   .pressed { background: #ffa300 !important; color: #111 !important; }
 
-  /* ---- 現代配置：照 Xbox 手把的比例 ----
-     左手：左搖桿在左上，十字鍵在它的右下方，兩個靠在一起
-     右手：ABXY 在右上，右搖桿在它的左下方
-     兩組各自包成一個 .cluster（200 × 240 單位），放在按鈕區中間 */
-  .left-zone  .shoulder { left: 10px; }
-  .right-zone .shoulder { right: 10px; }
-  .cluster {
-    position: absolute;
-    left: 50%;
-    width: calc(var(--u) * 200);
-    height: calc(var(--u) * 240);
-    top: calc(40px + (100cqh - var(--reserve) - var(--u) * 240) / 2);
-    transform: translateX(-50%);
-  }
-  #lstick { top: 0; left: calc(var(--u) * 6); }
-  .left-zone .pad {
-    width: calc(var(--u) * 92);
-    height: calc(var(--u) * 92);
-    top: calc(var(--u) * 128);
-    left: calc(var(--u) * 96);
-  }
-  .face { top: 0; right: 0; }
-  #rstick { top: calc(var(--u) * 132); left: calc(var(--u) * 10); }
+  /* ---- 現代配置 ----
+     左區：上方（靠畫面）十字鍵，下方（靠外側）左搖桿
+     右區：上方（靠畫面）右搖桿，下方（靠外側）A B X Y 菱形，A 在最下面 */
+  #dpad    { width: calc(var(--u) * 100); height: calc(var(--u) * 100); top: 0; right: 0; }
+  #lstick  { width: calc(var(--u) * 132); height: calc(var(--u) * 132); bottom: calc(var(--u) * 8); left: 0; }
+  #rstick  { width: calc(var(--u) * 96);  height: calc(var(--u) * 96);  top: 0; left: 0; }
+  .face    { width: calc(var(--u) * 186); height: calc(var(--u) * 186); bottom: 0; right: 0; }
+  .round   { width: calc(var(--u) * 62);  height: calc(var(--u) * 62); font-size: calc(var(--u) * 22); }
+  .round.y { left: calc(var(--u) * 62);  top: 0; }
+  .round.x { left: 0;                    top: calc(var(--u) * 62); }
+  .round.b { left: calc(var(--u) * 124); top: calc(var(--u) * 62); }
+  .round.a { left: calc(var(--u) * 62);  top: calc(var(--u) * 124); }
 
-  /* ---- 紅白機配置：只有十字鍵、B、A，放大置中 ---- */
+  /* 角落的小按鈕 */
+  .left-zone  .shoulder  { top: 6px; left: 8px; }
+  .right-zone .shoulder  { top: 6px; right: 8px; }
+  .left-zone  .menu-btn  { bottom: 6px; left: 8px; }
+  .right-zone .menu-btn  { bottom: 6px; right: 8px; }
+  .left-zone  .open-menu { top: 6px; right: 8px; min-width: 44px; }
+
+  /* ---- 紅白機配置：只有十字鍵、B、A，放大放在拇指停放處 ---- */
   body.layout-nes .shoulder,
   body.layout-nes .stick,
   body.layout-nes .round.x,
   body.layout-nes .round.y { display: none; }
-  body.layout-nes .left-zone .pad {
-    width: calc(var(--u) * 160);
-    height: calc(var(--u) * 160);
-    left: 50%;
+  body.layout-nes #dpad {
+    width: calc(var(--u) * 170); height: calc(var(--u) * 170);
+    top: auto; right: auto; bottom: calc(var(--u) * 30); left: calc(var(--u) * 10);
+  }
+  body.layout-nes .face { width: calc(var(--u) * 190); height: calc(var(--u) * 110); bottom: calc(var(--u) * 50); }
+  body.layout-nes .round { width: calc(var(--u) * 80); height: calc(var(--u) * 80); background: #8a1c1c; color: #eee; font-size: calc(var(--u) * 26); }
+  body.layout-nes .round.b { left: 0;                    top: calc(var(--u) * 26); }
+  body.layout-nes .round.a { left: calc(var(--u) * 104); top: 0; }
+
+  /* ---- ☰ 選單 ---- */
+  .menu-pop {
+    display: none;
+    position: fixed;
     top: 50%;
+    left: 50%;
     transform: translate(-50%, -50%);
+    flex-direction: column;
+    gap: 10px;
+    padding: 16px;
+    border-radius: 14px;
+    background: #1d1d1d;
+    border: 1px solid #333;
+    z-index: 15;
   }
-  body.layout-nes .face {
-    grid-template-columns: repeat(2, calc(var(--u) * 64));
-    grid-template-rows: calc(var(--u) * 64);
-    grid-template-areas: "b a";
-    gap: calc(var(--u) * 12);
-    left: 50%;
-    top: 50%;
-    right: auto;
-    transform: translate(-50%, -50%) rotate(-15deg);
-  }
-  body.layout-nes .round { background: #8a1c1c; color: #eee; font-size: calc(var(--u) * 22); }
+  .menu-pop.show { display: flex; }
+  .menu-pop button { font-size: 16px; padding: 12px 24px; }
 
   /* ============================================================
      觸控裝置（手指這種「粗」的指標）
      ============================================================ */
   @media (pointer: coarse) {
-    .help { display: none; }
-    .touch-only { display: inline-block !important; }
+    .help, .desktop-bar { display: none; }
     .zone { display: block; }
 
-    /* 直拿：畫面在最上面，接著工具列，下面左右兩區按鈕 */
+    /* 直拿：畫面在上，下面左右兩區按鈕 */
     body {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      grid-template-rows: auto auto 1fr;
-      gap: 8px 0;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 0;
       height: 100dvh;
       padding-top: env(safe-area-inset-top);
       padding-bottom: env(safe-area-inset-bottom);
     }
     canvas { grid-column: 1 / -1; width: 100vw; }
-    .topbar { grid-column: 1 / -1; flex-wrap: wrap; padding: 0 8px; }
-    .left-zone  { grid-column: 1; grid-row: 3; }
-    .right-zone { grid-column: 2; grid-row: 3; }
-    /* 直拿時下面空間很高，按鈕區固定高度、放在中間，手指才搆得到 */
-    .zone { height: 340px; align-self: center; }
+    .left-zone  { grid-column: 1; grid-row: 2; }
+    .right-zone { grid-column: 2; grid-row: 2; }
   }
 
-  /* 橫拿：畫面用滿整個高度（最大化），兩側用剩下的寬度放按鈕，按鈕跟著縮放。
-     工具列拆開放到四個角落 */
+  /* 橫拿：畫面用滿高度，兩側放按鈕（至少 --side-min 寬） */
   @media (pointer: coarse) and (orientation: landscape) {
     body {
       grid-template-columns: minmax(var(--side-min), 1fr) auto minmax(var(--side-min), 1fr);
       grid-template-rows: 100%;
-      gap: 0;
       padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
     }
     canvas {
       grid-column: 2;
       grid-row: 1;
       align-self: center;
-      /* 寬度：高度 × 4/3，但要留兩側最小寬度給按鈕 */
       width: min(calc(100dvh * 4 / 3),
                  calc(100vw - 2 * var(--side-min) - env(safe-area-inset-left) - env(safe-area-inset-right)));
     }
     .left-zone  { grid-column: 1; grid-row: 1; }
     .right-zone { grid-column: 3; grid-row: 1; }
-    .zone { height: auto; align-self: stretch; --reserve: 150px; }   /* 下方要留給角落的按鈕 */
-
-    /* 工具列的每個按鈕各自固定在角落：左下是 Select 和工具，右下是 Start 和配置 */
-    .topbar { display: contents; }
-    .topbar > * { position: fixed; z-index: 5; font-size: 11px; }
-    .topbar [data-btn="7"]  { left:  calc(10px + env(safe-area-inset-left));  bottom: 10px; }
-    #btn-load               { left:  calc(10px + env(safe-area-inset-left));  bottom: 44px; }
-    #btn-fullscreen         { left:  calc(10px + env(safe-area-inset-left));  bottom: 78px; }
-    .topbar [data-btn="6"]  { right: calc(10px + env(safe-area-inset-right)); bottom: 10px; }
-    #btn-layout             { right: calc(10px + env(safe-area-inset-right)); bottom: 44px; }
   }
 </style>
 </head>
 <body class="layout-modern">
 
-<div class="topbar">
-  <button id="btn-fullscreen" class="touch-only">全螢幕</button>
-  <button id="btn-load">載入遊戲</button>
-  <div class="pill touch-only" data-btn="7">SELECT</div>
-  <div class="pill touch-only" data-btn="6">START</div>
-  <button id="btn-layout" class="touch-only">配置：現代</button>
-</div>
-
 <canvas id="screen" width="320" height="240"></canvas>
 
+<div class="desktop-bar">
+  <button class="tool" id="btn-load">載入遊戲</button>
+</div>
 <p class="help">
   <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移動
   <kbd>K</kbd> A　<kbd>L</kbd> B　<kbd>J</kbd> X　<kbd>I</kbd> Y
@@ -325,25 +305,35 @@
 </p>
 <input type="file" id="file-picker" accept=".lua,text/plain" hidden>
 
-<div class="zone left-zone">
+<div class="zone left-zone" id="left-zone">
   <div class="pill shoulder" data-btn="10">L</div>
+  <div class="pill open-menu" id="btn-menu">☰</div>
   <div class="cluster">
-    <div class="stick" id="lstick"><div class="knob"></div></div>
     <div class="pad" id="dpad"><div class="cross"></div></div>
+    <div class="stick" id="lstick"><div class="knob"></div></div>
   </div>
+  <div class="pill menu-btn" data-btn="7">SELECT</div>
 </div>
 
 <div class="zone right-zone">
   <div class="pill shoulder" data-btn="11">R</div>
   <div class="cluster">
-    <div class="face">
-      <div class="round y" data-btn="9">Y</div>
-      <div class="round x" data-btn="8">X</div>
-      <div class="round b" data-btn="5">B</div>
-      <div class="round a" data-btn="4">A</div>
-    </div>
     <div class="stick" id="rstick"><div class="knob"></div></div>
+    <div class="face" id="face">
+      <div class="round y" data-face="9">Y</div>
+      <div class="round x" data-face="8">X</div>
+      <div class="round b" data-face="5">B</div>
+      <div class="round a" data-face="4">A</div>
+    </div>
   </div>
+  <div class="pill menu-btn" data-btn="6">START</div>
+</div>
+
+<div class="menu-pop" id="menu">
+  <button class="tool" id="btn-fullscreen">全螢幕</button>
+  <button class="tool" id="btn-load-touch">載入遊戲</button>
+  <button class="tool" id="btn-layout">配置：現代</button>
+  <button class="tool" id="btn-close-menu">關閉</button>
 </div>
 
 <div class="hint" id="hint"></div>
