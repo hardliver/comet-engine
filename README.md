@@ -34,6 +34,8 @@ core/                純 C 核心：不碰檔案、視窗、硬體
   script             Lua 與引擎的橋接、沙盒
   gfx                畫面陣列（320×240，8-bit 調色盤）與繪圖函式
   input              按鍵狀態：平台寫入、遊戲讀取
+  replay             重播檔：錄下每一幀的輸入，可完全重現同一場遊戲（格式見 replay.h）
+  sha256             SHA-256 指紋：辨認遊戲版本、比對畫面
   platform.h         核心需要平台提供的功能（印訊息）
   comet_lua_user.h   對 Lua 的設定（固定雜湊種子、輸出導向）
 third_party/lua/     Lua 5.4.9 原始碼（未修改，見該資料夾 README）
@@ -41,7 +43,7 @@ games/               範例遊戲（move_box、catch、blank）
 docs/
   AI_GUIDE.md        寫遊戲的說明文件：給 AI 也給人看，編輯器的「API 說明」就是這份
 platform/
-  mac/               用預設按鍵跑 90 幀，最後一幀存成 PPM（測試用）
+  mac/               無頭模擬器：用預設按鍵跑 90 幀存成 PPM；也能錄製、播放重播檔
   web/
     comet.js         載入引擎、遊戲迴圈（遊玩頁和編輯器共用）
     cart.js          多檔案專案合併成一個遊戲檔（編輯器和命令列共用）
@@ -62,6 +64,7 @@ tools/
 ```
 make                      # Mac 版
 ./build/mac games/xxx.lua # 跑指定遊戲，產生 out.ppm
+./build/mac games/xxx.lua out.ppm --replay 檔.rep   # 播放重播檔，檢查畫面是否一致（0 = 一致、3 = 不同）
 make serve                # 網頁版：瀏覽器開 http://localhost:8420
 make check                # 自動測試
 ```
@@ -100,6 +103,7 @@ function _draw()   end   -- 每幀一次：畫畫面
 
 - 畫面格式 320×240、8-bit 調色盤、按鍵編號（目前 12 個，最多 16 個）、搖桿範圍（±127）皆為暫定，規格 v0.1 才凍結
 - 同一串按鍵，Mac 版與網頁版輸出逐像素相同（`make check`）
+- 重播：遊玩頁從開局就一直錄，按「下載重播」得到 `.rep`（從頭到現在，錄影繼續）；把 `.rep` 拖進遊玩頁就用目前的遊戲播放，播完顯示最後的畫面是否一致，之後可接著玩。每次開局用新的亂數種子（記在重播檔裡）；Studio 與自動測試固定用種子 1
 - 網頁輸入：
   - 鍵盤：WASD = 左搖桿、方向鍵 = 右搖桿、K/L/J/I = A/B/X/Y（空白鍵也是 A）、Q/E = L/R、Enter = Start、Tab = Select
   - 手把（Gamepad API，最多 4 支）：按鍵、十字鍵、雙搖桿類比值

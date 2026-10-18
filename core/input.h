@@ -49,6 +49,9 @@ void input_set(int player, uint16_t buttons);
 // 設定某位玩家某支搖桿這一幀的位置（超出範圍會被限制在 ±127）
 void input_set_stick(int player, int stick, int x, int y);
 
+// 讀回某位玩家目前的按鍵 bit（重播錄影用）
+uint16_t input_get_buttons(int player);
+
 // ---- 遊戲用 ----
 
 // 某個按鍵是不是按著（1 = 按著，0 = 沒按）。

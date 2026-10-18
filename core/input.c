@@ -29,6 +29,12 @@ void input_set_stick(int player, int stick, int x, int y)
     sticks[player][stick][1] = (int8_t)clamp_stick(y);
 }
 
+uint16_t input_get_buttons(int player)
+{
+    if (!valid_player(player)) return 0;
+    return buttons[player];
+}
+
 int input_btn(int player, int button)
 {
     if (!valid_player(player)) return 0;

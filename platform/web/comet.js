@@ -78,6 +78,37 @@ export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log
             exports.input_set_stick(player, 1, s.rx, s.ry);
         },
         frame() { exports.engine_frame(); },
+
+        // ---- 亂數種子與重播（格式見 core/replay.h）----
+
+        // 下一次 load() 用的亂數種子（0～4294967295）
+        setSeed(seed) { exports.engine_set_seed(seed >>> 0); },
+
+        // 開始錄影：load() 成功之後馬上呼叫
+        recordBegin() { return exports.replay_record_begin(); },
+
+        // 到目前為止的重播檔（Uint8Array）。沒有在錄影回傳 null。
+        // slice() 複製一份出來：wasm 記憶體裡那一塊，下一幀就可能被改掉
+        replaySnapshot() {
+            const ptr = exports.replay_snapshot();
+            if (!ptr) return null;
+            const len = exports.replay_snapshot_size();
+            return new Uint8Array(exports.memory.buffer, ptr, len).slice();
+        },
+
+        // 準備播放：之後要再 load() 同一個遊戲。成功回傳 0
+        replayPlay(bytes) {
+            const ptr = exports.malloc(bytes.length);
+            new Uint8Array(exports.memory.buffer).set(bytes, ptr);
+            const err = exports.replay_play_begin(ptr, bytes.length);
+            exports.free(ptr);   // 引擎已經複製一份了
+            return err;
+        },
+        replayStop() { exports.replay_stop(); },
+        // 0 沒有、1 錄影中、2 播放中、3 播完了
+        replayState() { return exports.replay_state(); },
+        replayFrames() { return exports.replay_frames(); },
+        replayMatched() { return exports.replay_matched() === 1; },
         frameCount() { return exports.engine_frame_count(); },
 
         // 把引擎的畫面（顏色編號）查調色盤，寫進 ImageData。

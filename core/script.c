@@ -92,8 +92,14 @@ static int l_frame(lua_State *L)
 // rnd(n)：0 到 n-1 的隨機整數。
 // 用「固定種子」的亂數產生器（xorshift32），同一款遊戲每次執行、
 // 每個平台產生的數列都一樣，連線和重播才不會不同步。
-// （種子目前固定，之後由引擎在開局時決定，並記錄在重播檔裡）
+// 種子由平台在載入遊戲前決定（engine_set_seed），並記錄在重播檔裡
 static uint32_t rng_state = 1;
+static uint32_t load_seed = 1;   // 下一次載入遊戲時的種子
+
+void script_set_seed(uint32_t seed)
+{
+    load_seed = seed ? seed : 1;   // xorshift 的狀態是 0 的話會永遠是 0
+}
 
 static uint32_t rng_next(void)
 {
@@ -451,7 +457,7 @@ int script_load(const char *src, size_t len, const char *name)
         lua_close(L);   // 關掉上一款遊戲，釋放它用的全部記憶體
     }
     failed = 0;
-    rng_state = 1;      // 每次載入遊戲，亂數從同一個位置開始
+    rng_state = load_seed;   // 同一個種子 → 同一串亂數
 
     L = luaL_newstate();
     if (L == NULL) {

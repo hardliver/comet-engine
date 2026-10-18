@@ -285,6 +285,7 @@
 
 <div class="desktop-bar">
   <button class="tool" id="btn-load">載入遊戲</button>
+  <button class="tool" id="btn-save-replay">下載重播</button>
 </div>
 <p class="help">
   <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移動
@@ -292,10 +293,10 @@
   <kbd>Q</kbd> L　<kbd>E</kbd> R
   <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> 右搖桿
   <kbd>Enter</kbd> Start　<kbd>Tab</kbd> Select<br>
-  可以把 .lua 遊戲檔拖進這個網頁　·　<a href="studio.html">打開編輯器</a><br>
+  可以把 .lua 遊戲檔或 .rep 重播檔拖進這個網頁　·　<a href="studio.html">打開編輯器</a><br>
   <span id="pad-info">沒有偵測到手把（接上後要先按一個鍵，瀏覽器才會看到）</span>
 </p>
-<input type="file" id="file-picker" accept=".lua,text/plain" hidden>
+<input type="file" id="file-picker" accept=".lua,.rep,text/plain" hidden>
 
 <!-- 虛擬手把：每個控制項的位置、大小由 touchpad.js 設定 -->
 <div class="pad-layer" id="pad-layer">
@@ -332,6 +333,7 @@
   <button class="tool" id="btn-edit">調整按鍵位置</button>
   <button class="tool" id="btn-fullscreen">全螢幕</button>
   <button class="tool" id="btn-load-touch">載入遊戲</button>
+  <button class="tool" id="btn-save-replay-touch">下載重播</button>
   <button class="tool" id="btn-close-menu">關閉</button>
 </div>
 

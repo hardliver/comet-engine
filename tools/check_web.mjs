@@ -9,8 +9,13 @@
 // 測試 5：engine_check 抓得到語法錯誤，而且檢查時正在跑的遊戲不受影響（Studio 打字時用）
 // 測試 6：地圖測試（tests/map）跑 90 幀，網頁版和 Mac 版的 build/map_test.ppm 逐像素相同，
 //         左下角三個檢查方塊（mget、地圖外、mapw/maph）都是綠色
+// 測試 7：重播。Mac 版錄的重播檔，網頁版播放後最後的畫面一致；
+//         網頁版用同樣的按鍵錄出來的重播檔，和 Mac 版的逐 byte 相同；
+//         竄改過的重播檔會被發現（畫面不同）；不同的遊戲拒絕播放
+// 測試 8：遊戲指紋（engine_cart_sha）和 Node.js 內建的 SHA-256 相同
 
 import fs from "fs";
+import crypto from "crypto";
 
 const WASM = "build/web/comet.wasm";
 const W = 320, H = 240;
@@ -55,6 +60,32 @@ function framebufferRGB(engine) {
         for (let k = 0; k < 3; k++) rgb[i * 3 + k] = mem[pal + c * 3 + k];
     }
     return rgb;
+}
+
+// 和 platform/mac/main.c 的 scripted_input() 完全相同的輸入
+function scriptedInput(engine, i) {
+    let keys = 0, lx = 0, ly = 0, rx = 0, ry = 0;
+    if (i < 30) keys = 1 << BTN_RIGHT;
+    else if (i < 60) keys = 1 << BTN_DOWN;
+    else { keys = 1 << BTN_A; lx = 50; ly = -90; rx = -127; }
+    engine.input_set(0, keys);
+    engine.input_set_stick(0, 0, lx, ly);
+    engine.input_set_stick(0, 1, rx, ry);
+}
+
+// 把 bytes 交給 replay_play_begin
+function playBegin(engine, bytes) {
+    const ptr = engine.malloc(bytes.length);
+    new Uint8Array(engine.memory.buffer).set(bytes, ptr);
+    const err = engine.replay_play_begin(ptr, bytes.length);
+    engine.free(ptr);
+    return err;
+}
+
+// 一直跑到播完（最多 10 萬幀，避免壞掉時跑不停）。回傳 replay_state
+function runReplay(engine) {
+    for (let n = 0; engine.replay_state() === 2 && n < 100000; n++) engine.engine_frame();
+    return engine.replay_state();
 }
 
 function ok(name)            { console.log(`✓ ${name}`); }
@@ -179,6 +210,66 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
     });
     if (Buffer.compare(web, mac) === 0 && green) ok(name);
     else fail(name, Buffer.compare(web, mac) !== 0 ? "畫面不同" : `檢查方塊不是綠色${logs.length ? "：" + logs.join(" ") : ""}`);
+}
+
+// ---- 測試 7 ----
+{
+    const name = "重播：跨平台播放一致、錄出來的檔案相同、竄改會被發現、不同遊戲拒絕播放";
+    const src = fs.readFileSync("games/move_box.lua", "utf8");
+    const macRep = fs.readFileSync("build/move_box.rep");
+    const problems = [];
+
+    // (1) 播放 Mac 錄的檔案
+    {
+        const engine = await loadEngine();
+        if (playBegin(engine, macRep) !== 0) problems.push("Mac 的重播檔讀不進來");
+        load(engine, src);
+        const st = runReplay(engine);
+        if (st !== 3 || engine.replay_matched() !== 1) problems.push(`播放結果：狀態 ${st}、一致 ${engine.replay_matched()}`);
+        const ppm = fs.readFileSync("out.ppm");
+        if (Buffer.compare(framebufferRGB(engine), ppm.subarray(ppm.length - W * H * 3)) !== 0) {
+            problems.push("播放後的畫面和 out.ppm 不同");
+        }
+    }
+    // (2) 網頁版自己錄
+    {
+        const engine = await loadEngine();
+        load(engine, src);
+        engine.replay_record_begin();
+        for (let i = 0; i < 90; i++) { scriptedInput(engine, i); engine.engine_frame(); }
+        const ptr = engine.replay_snapshot();
+        const bytes = Buffer.from(new Uint8Array(engine.memory.buffer, ptr, engine.replay_snapshot_size()));
+        if (Buffer.compare(bytes, macRep) !== 0) problems.push(`網頁版錄的檔案（${bytes.length} bytes）和 Mac 版（${macRep.length} bytes）不同`);
+    }
+    // (3) 竄改：第一個事件的「右」改成「下」
+    {
+        const bad = Buffer.from(macRep);
+        bad[114] = 1 << BTN_DOWN;
+        const engine = await loadEngine();
+        playBegin(engine, bad);
+        load(engine, src);
+        if (runReplay(engine) !== 3 || engine.replay_matched() !== 0) problems.push("竄改過的重播檔沒有被發現");
+    }
+    // (4) 不同的遊戲
+    {
+        const engine = await loadEngine();
+        playBegin(engine, macRep);
+        if (load(engine, src + "\n-- 改了一行\n") !== 2) problems.push("遊戲改過了，卻沒有拒絕播放");
+    }
+    if (problems.length === 0) ok(name);
+    else fail(name, problems.join("；"));
+}
+
+// ---- 測試 8 ----
+{
+    const name = "遊戲指紋（SHA-256）和 Node.js 算的相同";
+    const src = fs.readFileSync("games/move_box.lua");
+    const engine = await loadEngine();
+    load(engine, src.toString("utf8"));
+    const ours = Buffer.from(new Uint8Array(engine.memory.buffer, engine.engine_cart_sha(), 32)).toString("hex");
+    const node = crypto.createHash("sha256").update(src).digest("hex");
+    if (ours === node) ok(name);
+    else fail(name, `引擎 ${ours}，Node.js ${node}`);
 }
 
 process.exit(failures ? 1 : 0);

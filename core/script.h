@@ -8,10 +8,14 @@
 #define SCRIPT_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 // 載入並執行遊戲原始碼（會先關掉上一款遊戲）。
 // name 是錯誤訊息裡顯示的檔名。成功回傳 0
 int script_load(const char *src, size_t len, const char *name);
+
+// 設定下一次 script_load() 時 rnd() 的亂數種子（0 會被換成 1）
+void script_set_seed(uint32_t seed);
 
 // 只編譯、不執行：檢查語法。用一個暫時的 Lua 環境，不影響正在執行的遊戲。
 // 沒錯回傳 0；有錯回傳 1，錯誤訊息寫進 err（最多 err_size byte，含結尾的 0）

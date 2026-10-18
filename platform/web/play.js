@@ -121,15 +121,86 @@ const engine = await createEngine({
     onLog: (msg) => { console.log(msg); showHint(msg, 8000); },
 });
 
+// ---- 開始一款遊戲（每次都錄影）----
+// 每次開局給一個新的亂數種子，遊戲才不會每次都遇到一樣的事；
+// 種子記在重播檔裡，所以重播時還是一模一樣。
+// 從開機就一直錄：成就驗證需要「從新遊戲開始」的完整紀錄，
+// 玩家任何時候按「下載重播」，拿到的都是從頭到現在的檔案（錄影繼續）。
+let currentSource = null;
+let currentName = "game";
+
+function randomSeed() {
+    return crypto.getRandomValues(new Uint32Array(1))[0] || 1;
+}
+
+function startGame(source, name) {
+    engine.replayStop();
+    engine.setSeed(randomSeed());
+    const err = engine.load(source);
+    if (!err) {
+        currentSource = source;
+        currentName = name;
+        engine.recordBegin();
+    }
+    return err;
+}
+
+// 檔名：遊戲名稱-日期時間.rep
+function saveReplay() {
+    const data = engine.replaySnapshot();
+    if (!data) {
+        showHint("目前沒有在錄影（播放重播時不會錄）");
+        return;
+    }
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([data], { type: "application/octet-stream" }));
+    a.download = `${currentName}-${stamp}.rep`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    const sec = Math.round(engine.frameCount() / 60);
+    showHint(`已下載重播：${sec} 秒，${(data.length / 1024).toFixed(1)} KB`);
+}
+$("btn-save-replay").addEventListener("click", saveReplay);
+$("btn-save-replay-touch").addEventListener("click", () => { menu.classList.remove("show"); saveReplay(); });
+
+// 播放重播：重新載入同一個遊戲，輸入改由重播檔提供。播完後可以接著玩
+let replayWatch = null;
+function playReplay(bytes) {
+    if (engine.replayPlay(bytes)) return;   // 格式不對：引擎會透過 onLog 顯示原因
+    const err = engine.load(currentSource);
+    if (err === 2) {
+        showHint("這個重播檔是別的遊戲，或遊戲改過了。請先載入錄影時的那個遊戲", 8000);
+        return;
+    }
+    const sec = Math.round(engine.replayFrames() / 60);
+    showHint(`重播中（${sec} 秒）……`, sec * 1000 + 1000);
+    clearInterval(replayWatch);
+    replayWatch = setInterval(() => {
+        if (engine.replayState() === 2) return;   // 還在播
+        clearInterval(replayWatch);
+        if (engine.replayState() === 3) {
+            showHint(engine.replayMatched()
+                ? "重播結束：最後的畫面和錄影時完全相同 ✓（現在可以接著玩）"
+                : "重播結束：最後的畫面和錄影時不同（遊戲或引擎版本可能不一樣）", 8000);
+        }
+    }, 250);
+}
+
 // 要玩哪一款：網址有 ?game=xxx.lua 就載那個，否則載 game.lua
 const params = new URLSearchParams(location.search);
 const gameUrl = params.get("game") || "game.lua";
-engine.load(await fetch(gameUrl).then((r) => r.text()));
+startGame(await fetch(gameUrl).then((r) => r.text()), gameUrl.split("/").pop().replace(/\.lua$/, ""));
 
-// 換遊戲：按「載入遊戲」選檔案，或在電腦上把 .lua 檔拖進網頁
+// 換遊戲：按「載入遊戲」選檔案，或在電腦上把 .lua 檔拖進網頁。
+// .rep 是重播檔：用目前的遊戲播放
 function loadFile(file) {
+    if (file.name.endsWith(".rep")) {
+        file.arrayBuffer().then((buf) => playReplay(new Uint8Array(buf)));
+        return;
+    }
     file.text().then((src) => {
-        if (!engine.load(src)) hint.classList.remove("show");
+        if (!startGame(src, file.name.replace(/\.lua$/, ""))) hint.classList.remove("show");
     });
 }
 const picker = document.getElementById("file-picker");

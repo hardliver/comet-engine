@@ -12,8 +12,18 @@
 // 平台用：開始時呼叫一次
 void engine_init(void);
 
-// 平台用：載入一款遊戲（Lua 原始碼）。成功回傳 0
+// 平台用：設定下一次 engine_load() 的亂數種子。
+// 沒設定就是 1（每次都一樣，自動測試用）；正式遊玩時平台每次給一個新的，
+// 遊戲才不會每次開局都遇到一樣的事。種子會記錄在重播檔裡
+void engine_set_seed(uint32_t seed);
+uint32_t engine_seed(void);
+
+// 平台用：載入一款遊戲（Lua 原始碼）。成功回傳 0。
+// 正在準備播放重播檔、但遊戲對不上時回傳 2，目前的遊戲繼續跑
 int engine_load(const char *src, size_t len);
+
+// 目前遊戲原始碼的 SHA-256（32 bytes）：同一個遊戲、同一個版本才會相同
+const uint8_t *engine_cart_sha(void);
 
 // 平台用：只檢查語法，不執行、不影響正在跑的遊戲（編輯器打字時用）。
 // 沒錯回傳 0；有錯回傳 1，錯誤訊息用 engine_check_error() 取得
