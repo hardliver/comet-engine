@@ -76,12 +76,38 @@ static int l_frame(lua_State *L)
     return 1;
 }
 
+// rnd(n)：0 到 n-1 的隨機整數。
+// 用「固定種子」的亂數產生器（xorshift32），同一款遊戲每次執行、
+// 每個平台產生的數列都一樣，連線和重播才不會不同步。
+// （種子目前固定，之後由引擎在開局時決定，並記錄在重播檔裡）
+static uint32_t rng_state = 1;
+
+static uint32_t rng_next(void)
+{
+    // xorshift32：只用位移和 XOR，在任何 CPU 上結果都相同
+    uint32_t x = rng_state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    rng_state = x;
+    return x;
+}
+
+static int l_rnd(lua_State *L)
+{
+    lua_Integer n = luaL_checkinteger(L, 1);
+    luaL_argcheck(L, n >= 1, 1, "must be at least 1");
+    lua_pushinteger(L, (lua_Integer)(rng_next() % (uint32_t)n));
+    return 1;
+}
+
 static const luaL_Reg api[] = {
     { "cls",   l_cls   },
     { "pset",  l_pset  },
     { "rect",  l_rect  },
     { "btn",   l_btn   },
     { "frame", l_frame },
+    { "rnd",   l_rnd   },
     { NULL, NULL }
 };
 
@@ -145,6 +171,7 @@ int script_load(const char *src, size_t len, const char *name)
         lua_close(L);   // 關掉上一款遊戲，釋放它用的全部記憶體
     }
     failed = 0;
+    rng_state = 1;      // 每次載入遊戲，亂數從同一個位置開始
 
     L = luaL_newstate();
     if (L == NULL) {

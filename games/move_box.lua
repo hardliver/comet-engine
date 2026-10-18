@@ -7,10 +7,12 @@
 --
 -- 可用的函式：cls(色) pset(x,y,色) rect(x,y,寬,高,色) btn(玩家,鍵) frame()
 -- 玩家從 0 開始；顏色 0–15；座標、大小都要用整數
+-- 按鍵 0–9：左 右 上 下 A B Start Select X Y
 
 -- 按鍵編號
 local LEFT, RIGHT, UP, DOWN = 0, 1, 2, 3
 local A, B, START, SELECT = 4, 5, 6, 7
+local X, Y = 8, 9                 -- 現代手把才有
 
 local SIZE = 16    -- 方塊大小
 local SPEED = 2    -- 每幀移動幾個像素
@@ -43,8 +45,9 @@ function _draw()
   local color = btn(0, A) and 10 or 7
   rect(x, y, SIZE, SIZE, color)
 
-  -- 畫面底部：8 個按鍵指示燈
-  for b = 0, 7 do
+  -- 畫面底部：10 個按鍵指示燈
+  -- 順序：左 右 上 下 A B Start Select X Y
+  for b = 0, 9 do
     rect(8 + b * 14, SCREEN_H - 14, 10, 8, btn(0, b) and 9 or 5)
   end
 end

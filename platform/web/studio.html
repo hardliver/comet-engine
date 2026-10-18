@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Comet Studio</title>
+<style>
+  :root {
+    --bg: #15171c;
+    --panel: #1d2027;
+    --line: #2c3039;
+    --text: #c9ced8;
+    --muted: #7d8494;
+    --accent: #ffa300;
+    --error: #ff5c6c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, sans-serif;
+    font-size: 13px;
+  }
+
+  /* ---- 上方工具列 ---- */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; color: #fff; font-weight: 600; }
+  header .spacer { flex: 1; }
+  button, select {
+    font: inherit;
+    padding: 5px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+  button:hover, select:hover { border-color: #444a56; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
+  label.toggle { display: flex; align-items: center; gap: 4px; color: var(--muted); }
+
+  /* ---- 主區：左邊程式碼、右邊遊戲 ---- */
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 660px);
+    min-height: 0;
+  }
+  #editor { min-height: 0; overflow: hidden; border-right: 1px solid var(--line); }
+  #editor .cm-editor { height: 100%; }
+  #editor .cm-scroller { font-size: 14px; }
+  .cm-error-line { background: rgba(255, 92, 108, 0.18) !important; }
+
+  .side {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .screen-wrap { padding: 12px; }
+  canvas {
+    display: block;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    image-rendering: pixelated;
+    background: #000;
+    outline: 2px solid transparent;
+    cursor: pointer;
+  }
+  canvas:focus { outline-color: var(--accent); }
+  .status {
+    display: flex;
+    justify-content: space-between;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .status .playing { color: var(--accent); }
+
+  /* ---- 下方分頁：主控台／API ---- */
+  .tabs { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--line); }
+  .tabs button { border: none; border-radius: 0; background: none; color: var(--muted); padding: 8px 10px; }
+  .tabs button.on { color: #fff; box-shadow: inset 0 -2px 0 var(--accent); }
+  .tab-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px; }
+  .tab-body[hidden] { display: none; }
+
+  #console { font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap; }
+  #console .line { padding: 2px 0; border-bottom: 1px solid #22252c; }
+  #console .err { color: var(--error); cursor: pointer; }
+  #console .err:hover { text-decoration: underline; }
+  #console .info { color: var(--muted); }
+
+  #api h2 { font-size: 14px; margin: 14px 0 6px; color: #fff; }
+  #api h3 { font-size: 13px; margin: 12px 0 4px; color: #fff; }
+  #api table { border-collapse: collapse; margin: 4px 0; }
+  #api td, #api th { border: 1px solid var(--line); padding: 3px 8px; text-align: left; }
+  #api code, #api pre { font-family: ui-monospace, Menlo, monospace; background: #111317; border-radius: 4px; }
+  #api code { padding: 1px 4px; }
+  #api pre { padding: 8px; overflow: auto; }
+  #api p, #api li { line-height: 1.6; }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    padding: 10px 16px;
+    border-radius: 8px;
+    background: #2a2e37;
+    color: #fff;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
+  /* 窄螢幕：上下排 */
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; grid-template-rows: auto 50vh auto; }
+    .side { order: -1; }
+    #editor { border-right: none; border-top: 1px solid var(--line); }
+    .tab-body { max-height: 30vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Comet Studio</h1>
+  <select id="template" title="從範例開始">
+    <option value="">新遊戲／範例…</option>
+    <option value="games/blank.lua">空白遊戲</option>
+    <option value="games/move_box.lua">移動方塊</option>
+    <option value="games/catch.lua">接住掉落的方塊</option>
+  </select>
+  <button id="btn-open">開啟 .lua</button>
+  <button id="btn-download">下載 .lua</button>
+  <button id="btn-ai" title="把說明文件和目前的程式碼一起複製，貼給 ChatGPT、Claude 等 AI">複製給 AI</button>
+  <span class="spacer"></span>
+  <label class="toggle"><input type="checkbox" id="auto-run" checked> 修改後自動重新執行</label>
+  <button id="btn-pause">暫停</button>
+  <button id="btn-step" disabled>下一幀</button>
+  <button id="btn-run" class="primary" title="Ctrl + Enter（Mac：⌘ + Enter）">▶ 重新執行</button>
+  <a href="index.html" target="_blank"><button>遊玩頁 ↗</button></a>
+</header>
+<input type="file" id="file-picker" accept=".lua,text/plain" hidden>
+
+<main>
+  <div id="editor"></div>
+  <div class="side">
+    <div class="screen-wrap">
+      <canvas id="screen" width="320" height="240" tabindex="0"></canvas>
+      <div class="status">
+        <span id="focus-hint">點一下畫面就能用鍵盤玩：方向鍵、Z = A、X = B、A = X、S = Y、Enter = Start</span>
+        <span id="frame-count"></span>
+      </div>
+    </div>
+    <div class="tabs">
+      <button data-tab="console" class="on">主控台</button>
+      <button data-tab="api">API 說明</button>
+    </div>
+    <div class="tab-body" id="console"></div>
+    <div class="tab-body" id="api" hidden></div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script type="module" src="studio.js"></script>
+</body>
+</html>

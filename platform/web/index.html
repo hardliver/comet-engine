@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <!-- user-scalable=no：手機連點時不要放大網頁
-     viewport-fit=cover：全螢幕時延伸到瀏海、圓角區域 -->
+     viewport-fit=cover：全螢幕時延伸到瀏海、圓角區域，再用 safe-area 留邊 -->
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <!-- iPhone：從主畫面開啟時，不顯示 Safari 的網址列 -->
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -13,6 +13,13 @@
 <link rel="manifest" href="manifest.webmanifest">
 <title>Comet</title>
 <style>
+  /* 按鈕尺寸集中在這裡，改這幾個數字就能調整大小 */
+  :root {
+    --pad: 150px;    /* 十字鍵／搖桿底座的直徑 */
+    --btn: 56px;     /* A B X Y 圓鈕的直徑 */
+    --side: 190px;   /* 橫拿時左右兩側按鈕區的寬度 */
+  }
+
   * { box-sizing: border-box; }
 
   html, body {
@@ -39,8 +46,7 @@
   }
 
   /* canvas 本身是 320×240，用 CSS 放大。
-     pixelated：放大時不要模糊，保持一格一格的像素
-     寬度最多 640px，視窗比較小時跟著縮，維持 4:3 */
+     pixelated：放大時不要模糊，保持一格一格的像素 */
   canvas {
     width: min(640px, 100vw);
     aspect-ratio: 4 / 3;
@@ -49,10 +55,10 @@
   }
 
   .help { text-align: center; line-height: 1.6; margin: 0; }
+  .help a { color: #ffa300; }
 
-  /* ---- 工具列：全螢幕、配置切換 ---- */
+  /* ---- 工具列 ---- */
   .toolbar { display: flex; gap: 8px; }
-  #btn-layout { display: none; }   /* 觸控配置只有手機需要 */
   .toolbar button {
     font: inherit;
     font-size: 12px;
@@ -61,7 +67,10 @@
     border-radius: 12px;
     background: #1a1a1a;
     color: #999;
+    white-space: nowrap;
   }
+  #btn-layout { display: none; }   /* 觸控配置只有手機需要 */
+
   .hint {
     display: none;
     position: fixed;
@@ -82,15 +91,16 @@
   /* ---- 觸控按鈕：預設隱藏，只有觸控裝置才顯示 ---- */
   .controls { display: none; }
 
+  /* 左手區：固定大小，不會被擠扁（flex-shrink: 0） */
   .pad {
     position: relative;
-    width: 150px;
-    height: 150px;
+    flex-shrink: 0;
+    width: var(--pad);
+    height: var(--pad);
     border-radius: 50%;
     background: #222;
   }
-
-  /* 紅白機配置：十字鍵 */
+  /* 紅白機配置：十字鍵。用百分比畫，底座多大十字就多大 */
   .pad .cross { position: absolute; inset: 0; }
   .pad .cross::before, .pad .cross::after {
     content: "";
@@ -98,29 +108,49 @@
     background: #444;
     border-radius: 6px;
   }
-  .pad .cross::before { left: 50px; top: 15px; width: 50px; height: 120px; }
-  .pad .cross::after  { left: 15px; top: 50px; width: 120px; height: 50px; }
+  .pad .cross::before { left: 33%; top: 10%; width: 34%; height: 80%; }
+  .pad .cross::after  { left: 10%; top: 33%; width: 80%; height: 34%; }
+  .pad.active .cross::before, .pad.active .cross::after { background: #555; }
 
   /* 現代配置：類比搖桿的圓頭，位置由 JavaScript 跟著手指移動 */
   .pad .knob {
     display: none;
     position: absolute;
-    left: 45px;
-    top: 45px;
-    width: 60px;
-    height: 60px;
+    left: 30%;
+    top: 30%;
+    width: 40%;
+    height: 40%;
     border-radius: 50%;
     background: #555;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
   }
   body.layout-modern .pad .cross { display: none; }
   body.layout-modern .pad .knob  { display: block; }
-  .pad.active .cross::before, .pad.active .cross::after { background: #555; }
 
-  .ab { display: flex; gap: 14px; align-items: center; }
+  /* 右手區：用 grid 排位置
+     紅白機：B A 一排
+     現代：  Y
+           X   B      （Xbox 手把的右手區）
+             A        */
+  .face {
+    display: grid;
+    flex-shrink: 0;
+    gap: 6px;
+    grid-template-columns: repeat(2, var(--btn));
+    grid-template-areas: "b a";
+  }
+  body.layout-modern .face {
+    grid-template-columns: repeat(3, var(--btn));
+    grid-template-rows: repeat(3, var(--btn));
+    grid-template-areas:
+      ".  y  ."
+      "x  .  b"
+      ".  a  .";
+    gap: 0;
+  }
   .round {
-    width: 66px;
-    height: 66px;
+    width: var(--btn);
+    height: var(--btn);
     border-radius: 50%;
     background: #444;
     color: #ddd;
@@ -130,12 +160,13 @@
     align-items: center;
     justify-content: center;
   }
-  /* 紅白機配置：B、A 橫排，紅色圓鈕 */
+  .round.a { grid-area: a; }
+  .round.b { grid-area: b; }
+  .round.x { grid-area: x; }
+  .round.y { grid-area: y; }
+  /* 紅白機沒有 X、Y；按鈕是紅色的 */
+  body.layout-nes .round.x, body.layout-nes .round.y { display: none; }
   body.layout-nes .round { background: #8a1c1c; color: #eee; }
-  /* 現代配置：A 在下、B 在右上，像 Xbox 手把的右手區 */
-  body.layout-modern .ab { flex-direction: row; align-items: flex-end; }
-  body.layout-modern .round.a { order: -1; }
-  body.layout-modern .round.b { margin-bottom: 52px; }
 
   .menu { display: flex; gap: 12px; }
   .pill {
@@ -148,72 +179,85 @@
 
   .pressed { background: #ffa300 !important; color: #111 !important; }
 
-  /* 觸控裝置（手指這種「粗」的指標） */
+  /* ============================================================
+     觸控裝置（手指這種「粗」的指標）
+     ============================================================ */
   @media (pointer: coarse) {
     .help { display: none; }
     #btn-layout { display: inline-block; }
+
+    /* 直拿：畫面在上，按鈕在下 */
     body {
       justify-content: flex-start;
       gap: 10px;
       padding-top: env(safe-area-inset-top);
       padding-bottom: env(safe-area-inset-bottom);
     }
-
-    /* 直拿：畫面在上，按鈕在下 */
     canvas { width: 100vw; }
     .controls {
       display: grid;
-      grid-template-columns: 1fr auto 1fr;
-      grid-template-areas: "pad menu ab";
+      grid-template-columns: 1fr 1fr;
+      grid-template-areas:
+        "pad  face"
+        "menu menu";
       align-items: center;
+      row-gap: 24px;
       width: 100%;
-      padding: 0 16px;
-      flex: 1;
+      padding: 16px 16px 0;
     }
     .pad  { grid-area: pad;  justify-self: start; }
-    .menu { grid-area: menu; flex-direction: column; }
-    .ab   { grid-area: ab;   justify-self: end; }
+    .face { grid-area: face; justify-self: end; }
+    .menu { grid-area: menu; justify-self: center; }
   }
 
-  /* 橫拿：畫面在中間，十字鍵在左、AB 在右 */
+  /* 橫拿：三欄，左邊按鈕區、中間畫面、右邊按鈕區。
+     兩側固定寬度，畫面用剩下的空間，按鈕不會被擠扁 */
   @media (pointer: coarse) and (orientation: landscape) {
     body {
-      flex-direction: row;
-      justify-content: center;
+      display: grid;
+      grid-template-columns: var(--side) minmax(0, 1fr) var(--side);
+      grid-template-rows: 100%;
+      height: 100dvh;
+      gap: 0;
       padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
     }
     canvas {
-      width: auto;
-      height: 100vh;
-      max-width: calc(100vw - 340px);
-      object-fit: contain;
+      grid-column: 2;
+      grid-row: 1;
+      place-self: center;
+      /* 寬度：不超過中間欄，也不超過「高度 × 4/3」 */
+      width: min(100%, calc(100dvh * 4 / 3));
+      height: auto;
     }
     .controls { display: contents; }
-    .pad  { order: -1; }
-    /* SELECT 放左下角、START 放右下角，不蓋到遊戲畫面 */
+    .pad  { grid-column: 1; grid-row: 1; place-self: center; }
+    .face { grid-column: 3; grid-row: 1; place-self: center; }
+
+    /* SELECT 左下角、START 右下角 */
     .menu {
       position: fixed;
-      left: 0;
-      right: 0;
+      left: calc(12px + env(safe-area-inset-left));
+      right: calc(12px + env(safe-area-inset-right));
       bottom: 10px;
-      flex-direction: row;
+      justify-self: stretch;  /* 蓋掉直拿時的置中，左右撐開 */
       justify-content: space-between;
-      padding: 0 calc(16px + env(safe-area-inset-right)) 0 calc(16px + env(safe-area-inset-left));
       pointer-events: none;   /* 中間空白處不要擋到畫面 */
     }
     .menu .pill { pointer-events: auto; }
-    /* 工具列放左上、右上角 */
+
+    /* 工具列：左上角直排；配置切換放右上角 */
     .toolbar {
       position: fixed;
-      left: 0;
-      right: 0;
+      left: calc(12px + env(safe-area-inset-left));
       top: 8px;
-      justify-content: flex-start;
-      padding: 0 calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left));
-      pointer-events: none;
+      flex-direction: column;
+      align-items: flex-start;
     }
-    .toolbar button { pointer-events: auto; }
-    #btn-layout { margin-left: auto; }   /* 配置切換放右上角 */
+    #btn-layout {
+      position: fixed;
+      right: calc(12px + env(safe-area-inset-right));
+      top: 8px;
+    }
   }
 </style>
 </head>
@@ -221,9 +265,8 @@
 <canvas id="screen" width="320" height="240"></canvas>
 
 <p class="help">
-  方向鍵移動　Z = A　X = B　Enter = Start　右 Shift = Select<br>
-  可以把 .lua 遊戲檔拖進這個網頁<br>
-  畫面左下 8 格依序是：左 右 上 下 A B Start Select，按著會亮<br>
+  方向鍵移動　Z = A　X = B　A = X　S = Y　Enter = Start　右 Shift = Select<br>
+  可以把 .lua 遊戲檔拖進這個網頁　·　<a href="studio.html">打開編輯器</a><br>
   <span id="pad-info">沒有偵測到手把（接上後要先按一個鍵，瀏覽器才會看到）</span>
 </p>
 
@@ -243,7 +286,9 @@
     <div class="pill" data-btn="7">SELECT</div>
     <div class="pill" data-btn="6">START</div>
   </div>
-  <div class="ab">
+  <div class="face">
+    <div class="round y" data-btn="9">Y</div>
+    <div class="round x" data-btn="8">X</div>
     <div class="round b" data-btn="5">B</div>
     <div class="round a" data-btn="4">A</div>
   </div>
@@ -251,6 +296,6 @@
 
 <div class="hint" id="hint"></div>
 
-<script src="main.js"></script>
+<script type="module" src="play.js"></script>
 </body>
 </html>

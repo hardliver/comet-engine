@@ -82,7 +82,7 @@ int main(int argc, char **argv)
     // 第 30–59 幀：按住下鍵
     // 第 60–89 幀：按住右鍵 + A
     for (int i = 0; i < 90; i++) {
-        uint8_t keys;
+        uint16_t keys;
         if (i < 30) {
             keys = 1 << BTN_RIGHT;
         } else if (i < 60) {
