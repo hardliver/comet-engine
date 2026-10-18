@@ -18,8 +18,8 @@
     --side: 200px;     /* 橫拿時左右兩側按鈕區的寬度 */
     --nes-pad: 150px;  /* 紅白機配置：十字鍵 */
     --nes-btn: 60px;   /* 紅白機配置：A、B */
-    --stick: 104px;    /* 現代配置：搖桿底座 */
-    --dpad: 96px;      /* 現代配置：十字鍵 */
+    --stick: 100px;    /* 現代配置：搖桿底座 */
+    --dpad: 92px;      /* 現代配置：十字鍵 */
     --btn: 44px;       /* 現代配置：A B X Y */
   }
 
@@ -189,19 +189,32 @@
 
   .pressed { background: #ffa300 !important; color: #111 !important; }
 
-  /* ---- 現代配置：左搖桿＋十字鍵在左，ABXY＋右搖桿在右（Xbox 手把的位置）---- */
+  /* ---- 現代配置：照 Xbox 手把的比例 ----
+     左手：左搖桿在左上，十字鍵在它的右下方，兩個靠在一起
+     右手：ABXY 在右上，右搖桿在它的左下方
+     兩組各自包成一個 .cluster，放在按鈕區的垂直中間，
+     螢幕再高也不會被拉開 */
   .left-zone  .shoulder { left: 12px; }
   .right-zone .shoulder { right: 12px; }
-  #lstick { top: 44px; left: 8px; }
-  .left-zone .pad { width: var(--dpad); height: var(--dpad); bottom: 14px; right: 8px; }
-  .face { top: 40px; right: 6px; }
-  #rstick { bottom: 14px; left: 8px; }
+  .cluster {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 240px;
+    transform: translateY(-45%);
+  }
+  #lstick { top: 0; left: 10px; }
+  .left-zone .pad { width: var(--dpad); height: var(--dpad); top: 128px; left: 92px; }
+  .face { top: 0; right: 4px; }
+  #rstick { top: 132px; left: 16px; }
 
   /* ---- 紅白機配置：只有十字鍵、B、A，放大置中 ---- */
   body.layout-nes .shoulder,
   body.layout-nes .stick,
   body.layout-nes .round.x,
   body.layout-nes .round.y { display: none; }
+  body.layout-nes .cluster { top: 0; bottom: 0; height: auto; transform: none; }
   body.layout-nes .left-zone .pad {
     width: var(--nes-pad);
     height: var(--nes-pad);
@@ -296,19 +309,23 @@
 
 <div class="zone left-zone">
   <div class="pill shoulder" data-btn="10">L</div>
-  <div class="stick" id="lstick"><div class="knob"></div></div>
-  <div class="pad" id="dpad"><div class="cross"></div></div>
+  <div class="cluster">
+    <div class="stick" id="lstick"><div class="knob"></div></div>
+    <div class="pad" id="dpad"><div class="cross"></div></div>
+  </div>
 </div>
 
 <div class="zone right-zone">
   <div class="pill shoulder" data-btn="11">R</div>
-  <div class="face">
-    <div class="round y" data-btn="9">Y</div>
-    <div class="round x" data-btn="8">X</div>
-    <div class="round b" data-btn="5">B</div>
-    <div class="round a" data-btn="4">A</div>
+  <div class="cluster">
+    <div class="face">
+      <div class="round y" data-btn="9">Y</div>
+      <div class="round x" data-btn="8">X</div>
+      <div class="round b" data-btn="5">B</div>
+      <div class="round a" data-btn="4">A</div>
+    </div>
+    <div class="stick" id="rstick"><div class="knob"></div></div>
   </div>
-  <div class="stick" id="rstick"><div class="knob"></div></div>
 </div>
 
 <div class="hint" id="hint"></div>
