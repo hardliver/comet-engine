@@ -6,12 +6,14 @@ Nova One 的遊戲引擎。同一份 C 核心，編譯到三個平台：Mac（�
 
 ```
 core/              純 C 核心：不碰檔案、視窗、硬體
-  gfx.h / gfx.c    畫面陣列（320×240，8-bit 調色盤）與繪圖函式
+  engine           一幀的流程：呼叫遊戲的 update、draw
+  gfx              畫面陣列（320×240，8-bit 調色盤）與繪圖函式
+  input            按鍵狀態：平台寫入、遊戲讀取
 examples/
-  test_scene.c     測試畫面，各平台畫同一張，用來比對結果
+  move_box.c       用方向鍵移動方塊（目前的測試遊戲）
 platform/
-  mac/             把畫面存成 PPM 圖檔
-  web/             把畫面畫到瀏覽器的 <canvas>
+  mac/             用預設按鍵跑 90 幀，最後一幀存成 PPM（測試用）
+  web/             60 fps 遊戲迴圈、鍵盤輸入、畫到 <canvas>
 ```
 
 ## 執行
@@ -26,4 +28,5 @@ make serve      # 網頁版：瀏覽器開 http://localhost:8420
 ## 狀態
 
 - 畫面格式 320×240、8-bit 調色盤為暫定，規格 v0.1 才凍結
-- Mac 版與網頁版輸出逐像素相同
+- 同一串按鍵，Mac 版與網頁版輸出逐像素相同
+- 網頁鍵盤：方向鍵、Z = A、X = B、Enter = Start、右 Shift = Select

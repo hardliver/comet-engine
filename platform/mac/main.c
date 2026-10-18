@@ -1,12 +1,13 @@
 // main.c — Mac 平台層
-// 呼叫核心畫圖，再把畫面存成 PPM 圖檔。
-// 只有平台層可以用 stdio（檔案、印字），核心不行。
+// Mac 版沒有視窗，所以用「預先寫好的按鍵」代替真人操作，
+// 跑固定幀數後把最後一幀存成圖檔。
+// 同一串按鍵在網頁上跑，結果必須一模一樣：這就是之後的「測試向量」。
 
 #include <stdio.h>
+#include "../../core/engine.h"
 #include "../../core/gfx.h"
-#include "../../examples/test_scene.h"
+#include "../../core/input.h"
 
-// 把核心的畫面（顏色編號）查調色盤換成 RGB，寫成 PPM 檔
 static int save_ppm(const char *path)
 {
     FILE *f = fopen(path, "wb");
@@ -18,12 +19,10 @@ static int save_ppm(const char *path)
     const uint8_t *fb  = gfx_framebuffer();
     const uint8_t *pal = gfx_palette();
 
-    // PPM 標頭：格式 P6、寬、高、每色最大值
     fprintf(f, "P6\n%d %d\n255\n", SCREEN_W, SCREEN_H);
-
     for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
-        uint8_t c = fb[i];              // 這個像素的顏色編號
-        fwrite(&pal[c * 3], 1, 3, f);   // 寫出對應的 R、G、B
+        uint8_t c = fb[i];
+        fwrite(&pal[c * 3], 1, 3, f);
     }
 
     fclose(f);
@@ -32,11 +31,27 @@ static int save_ppm(const char *path)
 
 int main(void)
 {
-    test_scene_draw();
+    engine_init();
+
+    // 第 0–29 幀：按住右鍵
+    // 第 30–59 幀：按住下鍵
+    // 第 60–89 幀：按住右鍵 + A
+    for (int i = 0; i < 90; i++) {
+        uint8_t keys;
+        if (i < 30) {
+            keys = 1 << BTN_RIGHT;
+        } else if (i < 60) {
+            keys = 1 << BTN_DOWN;
+        } else {
+            keys = (1 << BTN_RIGHT) | (1 << BTN_A);
+        }
+        input_set(0, keys);
+        engine_frame();
+    }
 
     if (save_ppm("out.ppm") != 0) {
         return 1;
     }
-    printf("已存成 out.ppm\n");
+    printf("跑了 %u 幀，已存成 out.ppm\n", engine_frame_count());
     return 0;
 }

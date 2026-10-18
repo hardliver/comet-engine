@@ -9,9 +9,14 @@
     margin: 0;
     min-height: 100vh;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 16px;
     background: #111;
+    color: #aaa;
+    font-family: system-ui, sans-serif;
+    font-size: 14px;
   }
   /* canvas 本身是 320×240，用 CSS 放大 2 倍。
      pixelated：放大時不要模糊，保持一格一格的像素 */
@@ -24,6 +29,7 @@
 </head>
 <body>
 <canvas id="screen" width="320" height="240"></canvas>
+<p>方向鍵移動　Z = A　X = B　Enter = Start　右 Shift = Select</p>
 <script src="main.js"></script>
 </body>
 </html>

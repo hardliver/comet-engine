@@ -9,12 +9,14 @@
 
 CFLAGS = -Wall -Wextra -std=c99 -O2
 
-# 所有平台共用的 C 檔：核心 + 測試畫面
-SHARED = core/gfx.c examples/test_scene.c
-HEADERS = core/gfx.h examples/test_scene.h
+# 所有平台共用的 C 檔：核心 + 遊戲
+CORE = core/gfx.c core/input.c core/engine.c
+GAME = examples/move_box.c
+SHARED = $(CORE) $(GAME)
+HEADERS = core/gfx.h core/input.h core/engine.h
 
 # 網頁版要讓 JavaScript 呼叫的 C 函式（名稱前面要加底線）
-WEB_EXPORTS = _test_scene_draw,_gfx_framebuffer,_gfx_palette
+WEB_EXPORTS = _engine_init,_engine_frame,_input_set,_gfx_framebuffer,_gfx_palette
 
 # 網頁伺服器的埠號；?= 代表指令列沒有指定時才用這個值
 PORT ?= 8420
