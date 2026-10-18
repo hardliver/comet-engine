@@ -204,63 +204,23 @@ export function setupTouch(root) {
         knob.style.transform = `translate(${dx}px, ${dy}px)`;
     }
 
-    // ---- 左搖桿：浮動式 ----
-    // 在左區任何空白處按下（不是十字鍵、不是小按鈕），搖桿就移到手指下面
-    const lstick = root.querySelector("#lstick");
-    const leftZone = root.querySelector("#left-zone");
-    if (lstick && leftZone) {
-        const knob = lstick.querySelector(".knob");
-        let active = null, center = null, radius = 0;
-
-        leftZone.addEventListener("pointerdown", (e) => {
-            if (active !== null) return;
-            if (e.target.closest("#dpad, .pill")) return;
-            if (getComputedStyle(lstick).display === "none") return;   // 紅白機配置沒有搖桿
-            active = e.pointerId;
-            leftZone.setPointerCapture(e.pointerId);
-
-            // 把底座移到手指的位置（座標相對於它的父元素）
-            const parent = lstick.offsetParent.getBoundingClientRect();
-            const r = lstick.getBoundingClientRect();
-            radius = r.width / 2;
-            lstick.style.left = `${e.clientX - parent.left - radius}px`;
-            lstick.style.top = `${e.clientY - parent.top - radius}px`;
-            lstick.style.bottom = "auto";
-            center = { x: e.clientX, y: e.clientY };
-            lstick.classList.add("active");
-            [state.lx, state.ly] = [0, 0];
-        });
-        leftZone.addEventListener("pointermove", (e) => {
-            if (e.pointerId !== active) return;
-            [state.lx, state.ly] = stickValue(e, center, radius);
-            moveKnob(knob, e, center, radius);
-        });
-        const release = (e) => {
-            if (e.pointerId !== active) return;
-            active = null;
-            state.lx = state.ly = 0;
-            knob.style.transform = "";
-            lstick.style.left = lstick.style.top = lstick.style.bottom = "";   // 回到原位
-            lstick.classList.remove("active");
-        };
-        leftZone.addEventListener("pointerup", release);
-        leftZone.addEventListener("pointercancel", release);
-    }
-
-    // ---- 右搖桿：固定位置 ----
-    const rstick = root.querySelector("#rstick");
-    if (rstick) {
-        const knob = rstick.querySelector(".knob");
-        trackPointer(rstick, (e) => {
-            const r = rstick.getBoundingClientRect();
+    // ---- 左、右搖桿 ----
+    // 手指的位置相對搖桿中心，換算成 -127～127；圓頭跟著手指移動
+    function setupStick(el, keyX, keyY) {
+        if (!el) return;
+        const knob = el.querySelector(".knob");
+        trackPointer(el, (e) => {
+            const r = el.getBoundingClientRect();
             const center = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-            [state.rx, state.ry] = stickValue(e, center, r.width / 2);
+            [state[keyX], state[keyY]] = stickValue(e, center, r.width / 2);
             moveKnob(knob, e, center, r.width / 2);
         }, () => {
-            state.rx = state.ry = 0;
+            state[keyX] = state[keyY] = 0;
             knob.style.transform = "";
         });
     }
+    setupStick(root.querySelector("#lstick"), "lx", "ly");
+    setupStick(root.querySelector("#rstick"), "rx", "ry");
 
     // ---- A B X Y：離手指最近的那一顆 ----
     const face = root.querySelector("#face");

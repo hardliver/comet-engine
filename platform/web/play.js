@@ -3,6 +3,7 @@
 
 import { createEngine, startLoop } from "./comet.js";
 import { setupKeyboard, setupTouch, readGamepad, merge } from "./input.js";
+import { setupTouchpad } from "./touchpad.js";
 
 // ---- 提示框：顯示幾秒後自動收起 ----
 const hint = document.getElementById("hint");
@@ -14,35 +15,38 @@ function showHint(text, ms = 4000) {
     hintTimer = setTimeout(() => hint.classList.remove("show"), ms);
 }
 
-// ---- 觸控配置 ----
-// 選擇記在瀏覽器裡，下次打開還是同一種。
-// 瀏覽器的儲存空間可能被關掉（例如私密瀏覽），所以用 try 包起來，失敗就算了
-const LAYOUT_NAMES = { nes: "紅白機", modern: "現代" };
-let layout = "modern";   // 預設：現代（雙搖桿 + 十字鍵 + ABXY）
+// ---- 虛擬手把（手機）----
+// 位置、配置、透明度、自訂都在 touchpad.js；這裡只接選單按鈕
+const pad = setupTouchpad();
+const $ = (id) => document.getElementById(id);
 
-function applyLayout(name) {
-    layout = name;
-    document.body.classList.remove("layout-nes", "layout-modern");
-    document.body.classList.add(`layout-${name}`);
-    document.getElementById("btn-layout").textContent = `配置：${LAYOUT_NAMES[name]}`;
-    try { localStorage.setItem("comet.layout", name); } catch (e) {}
+const menu = $("menu");
+function refreshMenu() {
+    for (const b of $("seg-preset").children) b.classList.toggle("on", b.dataset.preset === pad.preset());
+    for (const b of $("seg-screen").children) b.classList.toggle("on", b.dataset.screen === pad.screenMode());
+    $("opacity").value = pad.opacity();
 }
-try {
-    const saved = localStorage.getItem("comet.layout");
-    if (saved in LAYOUT_NAMES) layout = saved;
-} catch (e) {}
-applyLayout(layout);
+$("btn-menu").addEventListener("click", () => { refreshMenu(); menu.classList.toggle("show"); });
+$("btn-close-menu").addEventListener("click", () => menu.classList.remove("show"));
 
-document.getElementById("btn-layout").addEventListener("click", () => {
-    applyLayout(layout === "nes" ? "modern" : "nes");
+for (const b of $("seg-preset").children) {
+    b.addEventListener("click", () => { pad.setPreset(b.dataset.preset); refreshMenu(); });
+}
+for (const b of $("seg-screen").children) {
+    b.addEventListener("click", () => { pad.setScreenMode(b.dataset.screen); refreshMenu(); });
+}
+$("opacity").addEventListener("input", (e) => pad.setOpacity(Number(e.target.value)));
+
+// 調整按鍵位置：選單收起來，上方出現「縮小／放大／重設／完成」
+$("btn-edit").addEventListener("click", () => {
+    menu.classList.remove("show");
+    pad.startEditing();
+    showHint("拖曳按鍵可以移動；點一下選取後，可以按上方的放大、縮小", 4000);
 });
-
-// ---- ☰ 選單（手機）----
-const menu = document.getElementById("menu");
-const closeMenu = () => menu.classList.remove("show");
-document.getElementById("btn-menu").addEventListener("click", () => menu.classList.toggle("show"));
-document.getElementById("btn-close-menu").addEventListener("click", closeMenu);
-menu.addEventListener("click", (e) => { if (e.target.id !== "btn-close-menu" && e.target.tagName === "BUTTON") setTimeout(closeMenu, 150); });
+$("btn-smaller").addEventListener("click", () => pad.smaller());
+$("btn-bigger").addEventListener("click", () => pad.bigger());
+$("btn-reset").addEventListener("click", () => pad.reset());
+$("btn-done").addEventListener("click", () => pad.finishEditing());
 
 // ---- 全螢幕 ----
 // Android：瀏覽器支援 Fullscreen API，按一下就全螢幕，並嘗試鎖定橫向。
@@ -67,6 +71,7 @@ fsButton.addEventListener("click", async () => {
         showHint("iPhone 請用 Safari 打開這個網頁，按下方的「分享」→「加入主畫面」，之後從主畫面的圖示打開就是全螢幕。", 8000);
         return;
     }
+    menu.classList.remove("show");
     try {
         await request.call(root);
         await screen.orientation?.lock?.("landscape").catch(() => {});
@@ -122,6 +127,7 @@ function loadFile(file) {
 const picker = document.getElementById("file-picker");
 document.getElementById("btn-load").addEventListener("click", () => picker.click());
 document.getElementById("btn-load-touch").addEventListener("click", () => picker.click());
+document.getElementById("btn-load-touch").addEventListener("click", () => menu.classList.remove("show"));
 picker.addEventListener("change", () => {
     if (picker.files[0]) loadFile(picker.files[0]);
     picker.value = "";

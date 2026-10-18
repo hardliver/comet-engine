@@ -44,7 +44,8 @@ platform/
   web/
     comet.js         載入引擎、遊戲迴圈（遊玩頁和編輯器共用）
     cart.js          多檔案專案合併成一個遊戲檔（編輯器和命令列共用）
-    input.js         鍵盤、手把、觸控
+    input.js         鍵盤、手把、觸控（判斷按了什麼）
+    touchpad.js      手機虛擬手把的位置、配置、自訂
     index.html       遊玩頁（手機可用）
     studio.html      編輯器 Comet Studio
     vendor/          CodeMirror（編輯器元件，已打包）
@@ -96,5 +97,5 @@ function _draw()   end   -- 每幀一次：畫畫面
 - 網頁輸入：
   - 鍵盤：WASD = 左搖桿、方向鍵 = 右搖桿、K/L/J/I = A/B/X/Y（空白鍵也是 A）、Q/E = L/R、Enter = Start、Tab = Select
   - 手把（Gamepad API，最多 4 支）：按鍵、十字鍵、雙搖桿類比值
-  - 手機觸控：現代（雙搖桿 + 十字鍵 + ABXY + L/R，Xbox 手把的位置）、紅白機（十字鍵 + B A）
+  - 手機觸控：半透明虛擬手把浮在畫面上；預設 Xbox 配置，另有 Switch（A 右 B 下）、紅白機；可拖曳調整每個按鍵的位置和大小、調透明度；橫拿時畫面可選原比例或拉寬
 - 手機全螢幕：Android 按「全螢幕」；iPhone 用 Safari「加入主畫面」

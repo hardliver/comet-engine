@@ -3,20 +3,16 @@
 <head>
 <meta charset="utf-8">
 <!-- user-scalable=no：手機連點時不要放大網頁
-     viewport-fit=cover：全螢幕時延伸到瀏海、圓角區域，再用 safe-area 留邊 -->
+     viewport-fit=cover：全螢幕時延伸到瀏海、圓角區域 -->
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <!-- iPhone：從主畫面開啟時，不顯示 Safari 的網址列 -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#111111">
+<meta name="theme-color" content="#000000">
 <link rel="manifest" href="manifest.webmanifest">
 <title>Comet</title>
 <style>
-  :root {
-    --side-min: 200px;   /* 橫拿時兩側按鈕區至少多寬：寧可畫面小一點，按鈕也要夠大 */
-  }
-
   * { box-sizing: border-box; }
 
   html, body {
@@ -91,144 +87,124 @@
     color: #ddd;
     line-height: 1.6;
     text-align: center;
-    z-index: 20;
+    z-index: 30;
   }
   .hint.show { display: block; }
 
   /* ============================================================
-     觸控按鈕
-     ============================================================
-     設計原則（以拇指操作為主）：
-     1. 最常用的放在拇指自然停放的地方：左邊的移動、右邊的 A
-        都在下半部、靠外側；比較少用的（十字鍵、右搖桿）放上面、靠畫面那一側
-     2. 按鈕夠大：A B X Y 直徑約 60px 以上（手指按下的寬度約 45px）
-     3. 左搖桿是「浮動式」：在左區下半部任何空白處按下，搖桿中心就在那裡，
-        不用看、也不會按偏
-     4. A B X Y 用「離手指最近的鍵」判斷：按在兩顆中間也算數，按著可以滑到隔壁那顆
-     5. 不常用的功能（載入、全螢幕、換配置）收進「☰」選單
-
-     大小用 --u 表示：整組按鈕照 200 × 300 個單位設計，
-     --u 依按鈕區的寬、高自動縮放（100cqw、100cqh 是按鈕區的寬、高） */
-  .zone {
+     虛擬手把：浮在遊戲畫面上，位置由 touchpad.js 設定
+     ============================================================ */
+  .pad-layer {
     display: none;
-    position: relative;
-    align-self: stretch;     /* 撐滿整格：按鈕區沒有撐開的話高度是 0，按鈕全部消失 */
-    justify-self: stretch;
-    container-type: size;
-    --reserve: 96px;    /* 上方 L/R、下方 Select/Start 要用的高度 */
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    pointer-events: none;            /* 空白的地方不擋住任何東西 */
   }
-  .zone > * {
-    --u: min(calc(100cqw / 200), calc((100cqh - var(--reserve)) / 300));
+  .pad-layer > [data-ctl] {
+    position: absolute;
+    pointer-events: auto;
+    opacity: var(--pad-opacity, 0.5);
   }
 
-  /* 中間放大按鈕的區域：上方留 48px 給 L/R，下方留 48px 給 Select/Start */
-  .cluster {
-    position: absolute;
-    left: 50%;
-    top: calc(48px + (100cqh - var(--reserve) - var(--u) * 300) / 2);
-    width: calc(var(--u) * 200);
-    height: calc(var(--u) * 300);
-    transform: translateX(-50%);
-  }
-
-  /* ---- 十字鍵 ---- */
-  .pad {
-    position: absolute;
-    border-radius: 50%;
-    background: #222;
-  }
-  .pad .cross { position: absolute; inset: 0; }
-  .pad .cross::before, .pad .cross::after {
+  /* 搖桿與十字鍵：實際可以按的範圍比看到的大一圈（::before），不容易按偏 */
+  .stick, .pad { border-radius: 50%; }
+  .stick::before, .pad::before {
     content: "";
     position: absolute;
-    background: #454545;
-    border-radius: 7px;
-  }
-  .pad .cross::before { left: 33%; top: 8%; width: 34%; height: 84%; }
-  .pad .cross::after  { left: 8%; top: 33%; width: 84%; height: 34%; }
-  .pad.active .cross::before, .pad.active .cross::after { background: #5a5a5a; }
-
-  /* ---- 搖桿 ---- */
-  .stick {
-    position: absolute;
+    inset: -18%;
     border-radius: 50%;
-    background: #222;
-    border: 2px solid #2c2c2c;
+  }
+
+  .stick {
+    background: rgba(255, 255, 255, 0.12);
+    border: 2px solid rgba(255, 255, 255, 0.35);
   }
   .stick .knob {
     position: absolute;
-    left: 25%;
-    top: 25%;
-    width: 50%;
-    height: 50%;
+    left: 22%;
+    top: 22%;
+    width: 56%;
+    height: 56%;
     border-radius: 50%;
-    background: #555;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+    background: rgba(255, 255, 255, 0.55);
     pointer-events: none;
   }
   .stick.active .knob { background: #ffa300; }
 
-  /* ---- A B X Y ---- */
-  .face { position: absolute; }
-  .round {
+  .pad .cross { position: absolute; inset: 0; pointer-events: none; }
+  .pad .cross::before, .pad .cross::after {
+    content: "";
     position: absolute;
+    background: rgba(255, 255, 255, 0.45);
+    border-radius: 6px;
+  }
+  .pad .cross::before { left: 33%; top: 4%; width: 34%; height: 92%; }
+  .pad .cross::after  { left: 4%; top: 33%; width: 92%; height: 34%; }
+  .pad.active .cross::before, .pad.active .cross::after { background: rgba(255, 163, 0, 0.8); }
+
+  /* A B X Y：菱形，每顆佔 1/3。位置依配置（Xbox／Switch／紅白機）不同 */
+  .face .round {
+    position: absolute;
+    width: 33.3%;
+    height: 33.3%;
     border-radius: 50%;
-    background: #444;
-    color: #ddd;
+    background: rgba(255, 255, 255, 0.22);
+    border: 2px solid rgba(255, 255, 255, 0.5);
+    color: #fff;
     font-weight: bold;
+    font-size: 4.5vmin;
     display: flex;
     align-items: center;
     justify-content: center;
     pointer-events: none;   /* 由 .face 統一判斷按到哪一顆 */
   }
+  /* Xbox：Y 上、X 左、B 右、A 下 */
+  body[data-preset="xbox"] .round.y { left: 33.3%; top: 0; }
+  body[data-preset="xbox"] .round.x { left: 0;     top: 33.3%; }
+  body[data-preset="xbox"] .round.b { left: 66.6%; top: 33.3%; }
+  body[data-preset="xbox"] .round.a { left: 33.3%; top: 66.6%; }
+  /* Switch：X 上、Y 左、A 右、B 下 */
+  body[data-preset="switch"] .round.x { left: 33.3%; top: 0; }
+  body[data-preset="switch"] .round.y { left: 0;     top: 33.3%; }
+  body[data-preset="switch"] .round.a { left: 66.6%; top: 33.3%; }
+  body[data-preset="switch"] .round.b { left: 33.3%; top: 66.6%; }
+  /* 紅白機：B A 一排，大顆紅色 */
+  body[data-preset="nes"] .round.x, body[data-preset="nes"] .round.y { display: none; }
+  body[data-preset="nes"] .round { width: 46%; height: 84%; top: 8%; background: rgba(170, 30, 30, 0.6); font-size: 6vmin; }
+  body[data-preset="nes"] .round.b { left: 0; }
+  body[data-preset="nes"] .round.a { left: 54%; }
 
-  .pill {
-    position: absolute;
-    min-width: 72px;
-    padding: 9px 14px;
-    border-radius: 16px;
-    background: #2e2e2e;
-    color: #bbb;
-    font-size: 13px;
-    text-align: center;
+  .face .round.pressed { background: #ffa300; color: #111; }
+
+  .pad-layer .pill {
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.18);
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
-  .pressed { background: #ffa300 !important; color: #111 !important; }
+  .pad-layer .pill.pressed { background: #ffa300; color: #111; }
 
-  /* ---- 現代配置 ----
-     左區：上方（靠畫面）十字鍵，下方（靠外側）左搖桿
-     右區：上方（靠畫面）右搖桿，下方（靠外側）A B X Y 菱形，A 在最下面 */
-  #dpad    { width: calc(var(--u) * 100); height: calc(var(--u) * 100); top: 0; right: 0; }
-  #lstick  { width: calc(var(--u) * 132); height: calc(var(--u) * 132); bottom: calc(var(--u) * 8); left: 0; }
-  #rstick  { width: calc(var(--u) * 96);  height: calc(var(--u) * 96);  top: 0; left: 0; }
-  .face    { width: calc(var(--u) * 186); height: calc(var(--u) * 186); bottom: 0; right: 0; }
-  .round   { width: calc(var(--u) * 62);  height: calc(var(--u) * 62); font-size: calc(var(--u) * 22); }
-  .round.y { left: calc(var(--u) * 62);  top: 0; }
-  .round.x { left: 0;                    top: calc(var(--u) * 62); }
-  .round.b { left: calc(var(--u) * 124); top: calc(var(--u) * 62); }
-  .round.a { left: calc(var(--u) * 62);  top: calc(var(--u) * 124); }
-
-  /* 角落的小按鈕 */
-  .left-zone  .shoulder  { top: 6px; left: 8px; }
-  .right-zone .shoulder  { top: 6px; right: 8px; }
-  .left-zone  .menu-btn  { bottom: 6px; left: 8px; }
-  .right-zone .menu-btn  { bottom: 6px; right: 8px; }
-  .left-zone  .open-menu { top: 6px; right: 8px; min-width: 44px; }
-
-  /* ---- 紅白機配置：只有十字鍵、B、A，放大放在拇指停放處 ---- */
-  body.layout-nes .shoulder,
-  body.layout-nes .stick,
-  body.layout-nes .round.x,
-  body.layout-nes .round.y { display: none; }
-  body.layout-nes #dpad {
-    width: calc(var(--u) * 170); height: calc(var(--u) * 170);
-    top: auto; right: auto; bottom: calc(var(--u) * 30); left: calc(var(--u) * 10);
+  /* 選單按鈕：固定在右上角，不能拖動 */
+  .menu-btn {
+    display: none;
+    position: fixed;
+    top: max(8px, env(safe-area-inset-top));
+    right: max(10px, env(safe-area-inset-right));
+    z-index: 12;
+    width: 40px;
+    height: 32px;
+    border-radius: 10px;
+    border: none;
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+    font-size: 18px;
   }
-  body.layout-nes .face { width: calc(var(--u) * 190); height: calc(var(--u) * 110); bottom: calc(var(--u) * 50); }
-  body.layout-nes .round { width: calc(var(--u) * 80); height: calc(var(--u) * 80); background: #8a1c1c; color: #eee; font-size: calc(var(--u) * 26); }
-  body.layout-nes .round.b { left: 0;                    top: calc(var(--u) * 26); }
-  body.layout-nes .round.a { left: calc(var(--u) * 104); top: 0; }
 
-  /* ---- ☰ 選單 ---- */
+  /* ---- 選單 ---- */
   .menu-pop {
     display: none;
     position: fixed;
@@ -237,57 +213,73 @@
     transform: translate(-50%, -50%);
     flex-direction: column;
     gap: 10px;
+    min-width: 240px;
     padding: 16px;
     border-radius: 14px;
     background: #1d1d1d;
     border: 1px solid #333;
-    z-index: 15;
+    z-index: 20;
+    max-height: 92dvh;
+    overflow: auto;
   }
   .menu-pop.show { display: flex; }
-  .menu-pop button { font-size: 16px; padding: 12px 24px; }
+  .menu-pop button { font-size: 15px; padding: 10px 18px; }
+  .menu-pop label { display: flex; align-items: center; gap: 10px; color: #ccc; font-size: 14px; }
+  .menu-pop input[type=range] { flex: 1; }
+  .seg { display: flex; gap: 6px; }
+  .seg button { flex: 1; }
+  .seg button.on { background: #ffa300; color: #111; border-color: #ffa300; }
+  .menu-title { color: #888; font-size: 12px; margin-top: 4px; }
+
+  /* ---- 調整按鍵位置 ---- */
+  .edit-bar {
+    display: none;
+    position: fixed;
+    left: 50%;
+    top: max(8px, env(safe-area-inset-top));
+    transform: translateX(-50%);
+    gap: 8px;
+    z-index: 25;
+  }
+  .edit-bar button { font-size: 15px; padding: 9px 16px; }
+  .edit-bar .done { background: #ffa300; color: #111; border-color: #ffa300; }
+  body.editing .edit-bar { display: flex; }
+  body.editing .menu-btn { display: none !important; }
+  body.editing .pad-layer > [data-ctl] { outline: 2px dashed rgba(255, 255, 255, 0.5); outline-offset: 4px; }
+  body.editing .pad-layer > [data-ctl].selected { outline: 3px solid #ffa300; }
 
   /* ============================================================
      觸控裝置（手指這種「粗」的指標）
      ============================================================ */
   @media (pointer: coarse) {
     .help, .desktop-bar { display: none; }
-    .zone { display: block; }
+    .pad-layer { display: block; }
+    .menu-btn { display: block; }
+    body { display: block; background: #000; }
 
-    /* 直拿：畫面在上，下面左右兩區按鈕 */
-    body {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      grid-template-rows: auto minmax(0, 1fr);
-      gap: 0;
-      height: 100dvh;
-      padding-top: env(safe-area-inset-top);
-      padding-bottom: env(safe-area-inset-bottom);
-    }
-    canvas { grid-column: 1 / -1; width: 100vw; }
-    .left-zone  { grid-column: 1; grid-row: 2; }
-    .right-zone { grid-column: 2; grid-row: 2; }
+    /* 直拿：畫面在上方 */
+    canvas { position: fixed; top: env(safe-area-inset-top); left: 0; width: 100vw; }
   }
 
-  /* 橫拿：畫面用滿高度，兩側放按鈕（至少 --side-min 寬） */
+  /* 橫拿：原比例 = 高度填滿、置中；拉寬 = 填滿整個螢幕 */
   @media (pointer: coarse) and (orientation: landscape) {
-    body {
-      grid-template-columns: minmax(var(--side-min), 1fr) auto minmax(var(--side-min), 1fr);
-      grid-template-rows: 100%;
-      padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
-    }
     canvas {
-      grid-column: 2;
-      grid-row: 1;
-      align-self: center;
-      width: min(calc(100dvh * 4 / 3),
-                 calc(100vw - 2 * var(--side-min) - env(safe-area-inset-left) - env(safe-area-inset-right)));
+      top: 0;
+      left: 50%;
+      height: 100dvh;
+      width: auto;
+      transform: translateX(-50%);
     }
-    .left-zone  { grid-column: 1; grid-row: 1; }
-    .right-zone { grid-column: 3; grid-row: 1; }
+    body[data-screen="stretch"] canvas {
+      left: 0;
+      width: 100vw;
+      aspect-ratio: auto;
+      transform: none;
+    }
   }
 </style>
 </head>
-<body class="layout-modern">
+<body data-preset="xbox" data-screen="fit">
 
 <canvas id="screen" width="320" height="240"></canvas>
 
@@ -305,35 +297,49 @@
 </p>
 <input type="file" id="file-picker" accept=".lua,text/plain" hidden>
 
-<div class="zone left-zone" id="left-zone">
-  <div class="pill shoulder" data-btn="10">L</div>
-  <div class="pill open-menu" id="btn-menu">☰</div>
-  <div class="cluster">
-    <div class="pad" id="dpad"><div class="cross"></div></div>
-    <div class="stick" id="lstick"><div class="knob"></div></div>
+<!-- 虛擬手把：每個控制項的位置、大小由 touchpad.js 設定 -->
+<div class="pad-layer" id="pad-layer">
+  <div class="stick" id="lstick" data-ctl="lstick"><div class="knob"></div></div>
+  <div class="pad" id="dpad" data-ctl="dpad"><div class="cross"></div></div>
+  <div class="face" id="face" data-ctl="face">
+    <div class="round y" data-face="9">Y</div>
+    <div class="round x" data-face="8">X</div>
+    <div class="round b" data-face="5">B</div>
+    <div class="round a" data-face="4">A</div>
   </div>
-  <div class="pill menu-btn" data-btn="7">SELECT</div>
+  <div class="stick" id="rstick" data-ctl="rstick"><div class="knob"></div></div>
+  <div class="pill" data-ctl="L" data-btn="10">L</div>
+  <div class="pill" data-ctl="R" data-btn="11">R</div>
+  <div class="pill" data-ctl="select" data-btn="7">SELECT</div>
+  <div class="pill" data-ctl="start" data-btn="6">START</div>
 </div>
 
-<div class="zone right-zone">
-  <div class="pill shoulder" data-btn="11">R</div>
-  <div class="cluster">
-    <div class="stick" id="rstick"><div class="knob"></div></div>
-    <div class="face" id="face">
-      <div class="round y" data-face="9">Y</div>
-      <div class="round x" data-face="8">X</div>
-      <div class="round b" data-face="5">B</div>
-      <div class="round a" data-face="4">A</div>
-    </div>
-  </div>
-  <div class="pill menu-btn" data-btn="6">START</div>
-</div>
+<button class="menu-btn" id="btn-menu">☰</button>
 
 <div class="menu-pop" id="menu">
+  <div class="menu-title">按鍵配置</div>
+  <div class="seg" id="seg-preset">
+    <button class="tool" data-preset="xbox">Xbox</button>
+    <button class="tool" data-preset="switch">Switch</button>
+    <button class="tool" data-preset="nes">紅白機</button>
+  </div>
+  <div class="menu-title">畫面（橫拿時）</div>
+  <div class="seg" id="seg-screen">
+    <button class="tool" data-screen="fit">原比例</button>
+    <button class="tool" data-screen="stretch">拉寬</button>
+  </div>
+  <label>透明度 <input type="range" id="opacity" min="0.15" max="1" step="0.05"></label>
+  <button class="tool" id="btn-edit">調整按鍵位置</button>
   <button class="tool" id="btn-fullscreen">全螢幕</button>
   <button class="tool" id="btn-load-touch">載入遊戲</button>
-  <button class="tool" id="btn-layout">配置：現代</button>
   <button class="tool" id="btn-close-menu">關閉</button>
+</div>
+
+<div class="edit-bar" id="edit-bar">
+  <button class="tool" id="btn-smaller">縮小</button>
+  <button class="tool" id="btn-bigger">放大</button>
+  <button class="tool" id="btn-reset">重設</button>
+  <button class="tool done" id="btn-done">完成</button>
 </div>
 
 <div class="hint" id="hint"></div>
