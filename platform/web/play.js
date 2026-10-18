@@ -2,7 +2,7 @@
 // 引擎和輸入的細節在 comet.js、input.js；這裡只負責遊玩頁的畫面和按鈕。
 
 import { createEngine, startLoop } from "./comet.js";
-import { setupKeyboard, setupTouch, readGamepad } from "./input.js";
+import { setupKeyboard, setupTouch, readGamepad, merge } from "./input.js";
 
 // ---- 提示框：顯示幾秒後自動收起 ----
 const hint = document.getElementById("hint");
@@ -18,7 +18,7 @@ function showHint(text, ms = 4000) {
 // 選擇記在瀏覽器裡，下次打開還是同一種。
 // 瀏覽器的儲存空間可能被關掉（例如私密瀏覽），所以用 try 包起來，失敗就算了
 const LAYOUT_NAMES = { nes: "紅白機", modern: "現代" };
-let layout = "nes";
+let layout = "modern";   // 預設：現代（雙搖桿 + 十字鍵 + ABXY）
 
 function applyLayout(name) {
     layout = name;
@@ -46,7 +46,7 @@ const isStandalone =
     window.navigator.standalone === true;
 
 const fsButton = document.getElementById("btn-fullscreen");
-if (isStandalone) fsButton.style.display = "none";   // 已經是全螢幕了
+if (isStandalone) fsButton.remove();   // 已經是全螢幕了
 
 fsButton.addEventListener("click", async () => {
     const root = document.documentElement;
@@ -89,11 +89,11 @@ window.addEventListener("gamepaddisconnected", () => {
 
 // ---- 啟動 ----
 const keyboard = setupKeyboard();
-const touch = setupTouch(document, () => layout);
+const touch = setupTouch(document);
 
 // 1 號玩家：鍵盤、觸控、第 1 支手把都能控制；2–4 號玩家：第 2–4 支手把
 function getInput(player) {
-    if (player === 0) return keyboard() | touch() | readGamepad(0);
+    if (player === 0) return merge(keyboard(), touch(), readGamepad(0));
     return readGamepad(player);
 }
 

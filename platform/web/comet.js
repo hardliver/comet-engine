@@ -61,7 +61,12 @@ export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log
             return err;
         },
 
-        setInput(player, bits) { exports.input_set(player, bits); },
+        // 一位玩家這一幀的輸入：{ buttons, lx, ly, rx, ry }（格式見 input.js）
+        setInput(player, s) {
+            exports.input_set(player, s.buttons);
+            exports.input_set_stick(player, 0, s.lx, s.ly);
+            exports.input_set_stick(player, 1, s.rx, s.ry);
+        },
         frame() { exports.engine_frame(); },
         frameCount() { return exports.engine_frame_count(); },
 
@@ -87,7 +92,7 @@ export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log
 // requestAnimationFrame 跟著螢幕更新：60Hz 螢幕每秒 60 次，120Hz 螢幕每秒 120 次。
 // 所以不能「被叫一次就跑一幀」，而是累積經過的時間，每滿 1/60 秒才跑一幀。
 //
-// getInput(player) 回傳那位玩家這一幀的按鍵 bit。
+// getInput(player) 回傳那位玩家這一幀的輸入狀態（格式見 input.js）。
 export function startLoop(engine, canvas, getInput) {
     const ctx = canvas.getContext("2d");
     const image = ctx.createImageData(SCREEN_W, SCREEN_H);

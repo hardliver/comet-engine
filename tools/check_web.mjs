@@ -61,9 +61,15 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
     try {
         const engine = await loadEngine();
         load(engine, fs.readFileSync("games/move_box.lua", "utf8"));
+        // 和 platform/mac/main.c 完全相同的輸入
         for (let i = 0; i < 90; i++) {
-            const keys = i < 30 ? 1 << BTN_RIGHT : i < 60 ? 1 << BTN_DOWN : (1 << BTN_RIGHT) | (1 << BTN_A);
+            let keys = 0, lx = 0, ly = 0, rx = 0, ry = 0;
+            if (i < 30) keys = 1 << BTN_RIGHT;
+            else if (i < 60) keys = 1 << BTN_DOWN;
+            else { keys = 1 << BTN_A; lx = 50; ly = -90; rx = -127; }
             engine.input_set(0, keys);
+            engine.input_set_stick(0, 0, lx, ly);
+            engine.input_set_stick(0, 1, rx, ry);
             engine.engine_frame();
         }
         const ppm = fs.readFileSync("out.ppm");

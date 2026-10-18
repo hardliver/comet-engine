@@ -59,7 +59,8 @@ function _draw()   end   -- 每幀一次：畫畫面
 | `cls(色)` | 清除畫面 |
 | `pset(x, y, 色)` | 畫一個點 |
 | `rect(x, y, 寬, 高, 色)` | 畫實心矩形 |
-| `btn(玩家, 鍵)` | 按著回傳 `true`。玩家 0–3；鍵 0–9：左 右 上 下 A B Start Select X Y |
+| `btn(玩家, 鍵)` | 按著回傳 `true`。玩家 0–3；鍵 0–11：左 右 上 下 A B Start Select X Y L R |
+| `stick(玩家, n)` | 搖桿 x, y（-127～127）；n = 0 左、1 右 |
 | `rnd(n)` | 0 到 n-1 的隨機整數（各平台結果相同） |
 | `frame()` | 目前第幾幀 |
 | `SCREEN_W`、`SCREEN_H` | 320、240 |
@@ -69,7 +70,10 @@ function _draw()   end   -- 每幀一次：畫畫面
 
 ## 狀態
 
-- 畫面格式 320×240、8-bit 調色盤、按鍵編號（目前 10 個，最多 16 個）皆為暫定，規格 v0.1 才凍結
+- 畫面格式 320×240、8-bit 調色盤、按鍵編號（目前 12 個，最多 16 個）、搖桿範圍（±127）皆為暫定，規格 v0.1 才凍結
 - 同一串按鍵，Mac 版與網頁版輸出逐像素相同（`make check`）
-- 網頁輸入：鍵盤（方向鍵、Z = A、X = B、A = X、S = Y、Enter = Start、右 Shift = Select）、Gamepad API 手把（最多 4 支）、手機觸控（紅白機：十字鍵 + B A；現代：搖桿 + ABXY）
+- 網頁輸入：
+  - 鍵盤：WASD = 左搖桿、方向鍵 = 右搖桿、K/L/J/I = A/B/X/Y（空白鍵也是 A）、Q/E = L/R、Enter = Start、Tab = Select
+  - 手把（Gamepad API，最多 4 支）：按鍵、十字鍵、雙搖桿類比值
+  - 手機觸控：現代（雙搖桿 + 十字鍵 + ABXY + L/R，Xbox 手把的位置）、紅白機（十字鍵 + B A）
 - 手機全螢幕：Android 按「全螢幕」；iPhone 用 Safari「加入主畫面」

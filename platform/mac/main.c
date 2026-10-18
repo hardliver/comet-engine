@@ -80,17 +80,22 @@ int main(int argc, char **argv)
 
     // 第 0–29 幀：按住右鍵
     // 第 30–59 幀：按住下鍵
-    // 第 60–89 幀：按住右鍵 + A
+    // 第 60–89 幀：按住 A，左搖桿推向右上 (50, -90)，右搖桿推向左 (-127, 0)
     for (int i = 0; i < 90; i++) {
-        uint16_t keys;
+        uint16_t keys = 0;
+        int lx = 0, ly = 0, rx = 0, ry = 0;
         if (i < 30) {
             keys = 1 << BTN_RIGHT;
         } else if (i < 60) {
             keys = 1 << BTN_DOWN;
         } else {
-            keys = (1 << BTN_RIGHT) | (1 << BTN_A);
+            keys = 1 << BTN_A;
+            lx = 50;  ly = -90;
+            rx = -127;
         }
         input_set(0, keys);
+        input_set_stick(0, STICK_LEFT, lx, ly);
+        input_set_stick(0, STICK_RIGHT, rx, ry);
         engine_frame();
     }
 

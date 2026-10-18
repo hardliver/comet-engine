@@ -23,7 +23,7 @@ SHARED = $(CORE) $(LUA_SRC)
 
 # 網頁版要讓 JavaScript 呼叫的 C 函式（名稱前面要加底線）
 # malloc、free：JavaScript 要把 Lua 原始碼放進 wasm 的記憶體
-WEB_EXPORTS = _engine_init,_engine_load,_engine_frame,_engine_frame_count,_input_set,_gfx_framebuffer,_gfx_palette,_malloc,_free
+WEB_EXPORTS = _engine_init,_engine_load,_engine_frame,_engine_frame_count,_input_set,_input_set_stick,_gfx_framebuffer,_gfx_palette,_malloc,_free
 
 # 網頁伺服器的埠號；?= 代表指令列沒有指定時才用這個值
 PORT ?= 8420

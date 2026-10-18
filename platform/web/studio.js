@@ -6,7 +6,7 @@ import {
     Decoration, indentWithTab, StreamLanguage, indentUnit, lua, oneDark,
 } from "./vendor/codemirror.js";
 import { createEngine, startLoop } from "./comet.js";
-import { setupKeyboard, readGamepad } from "./input.js";
+import { setupKeyboard, readGamepad, merge } from "./input.js";
 
 const STORAGE_KEY = "comet.studio.code";
 const $ = (id) => document.getElementById(id);
@@ -169,7 +169,7 @@ const keyboard = setupKeyboard();
 const canvas = $("screen");
 
 function getInput(player) {
-    if (player === 0) return keyboard() | readGamepad(0);
+    if (player === 0) return merge(keyboard(), readGamepad(0));
     return readGamepad(player);
 }
 const loop = startLoop(engine, canvas, getInput);

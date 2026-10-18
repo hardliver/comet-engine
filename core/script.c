@@ -69,6 +69,17 @@ static int l_btn(lua_State *L)
     return 1;
 }
 
+// stick(player, n)：搖桿位置，回傳 x, y 兩個值（-127～127）
+// n：0 = 左搖桿，1 = 右搖桿。往右、往下是正的（和畫面座標相同）
+static int l_stick(lua_State *L)
+{
+    lua_Integer p = luaL_checkinteger(L, 1);
+    lua_Integer n = luaL_optinteger(L, 2, 0);
+    lua_pushinteger(L, input_stick_x((int)p, (int)n));
+    lua_pushinteger(L, input_stick_y((int)p, (int)n));
+    return 2;   // 回傳兩個值
+}
+
 // frame()：目前是第幾幀。遊戲要計時就用它，不用系統時間
 static int l_frame(lua_State *L)
 {
@@ -106,6 +117,7 @@ static const luaL_Reg api[] = {
     { "pset",  l_pset  },
     { "rect",  l_rect  },
     { "btn",   l_btn   },
+    { "stick", l_stick },
     { "frame", l_frame },
     { "rnd",   l_rnd   },
     { NULL, NULL }
