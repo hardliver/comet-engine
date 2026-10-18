@@ -43,4 +43,11 @@ void game_draw(void)
     // A 鍵按著時方塊變黃色，平常是白色
     uint8_t color = input_btn(0, BTN_A) ? 10 : 7;
     gfx_rect(box_x, box_y, BOX_SIZE, BOX_SIZE, color);
+
+    // 畫面底部：8 個按鍵指示燈，按著的亮橘色，沒按的暗灰色
+    // 順序：左 右 上 下 A B Start Select
+    for (int b = 0; b < 8; b++) {
+        uint8_t c = input_btn(0, b) ? 9 : 5;
+        gfx_rect(8 + b * 14, SCREEN_H - 14, 10, 8, c);
+    }
 }

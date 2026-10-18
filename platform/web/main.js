@@ -42,6 +42,47 @@ window.addEventListener("keyup", (e) => {
 // 切到別的視窗時，keyup 可能收不到，全部放開比較安全
 window.addEventListener("blur", () => { keys = 0; });
 
+// ---- 手把（Gamepad API）----
+// 瀏覽器把認得的手把整理成「標準配置」，按鍵編號固定：
+//   0 = 下面那顆（Xbox 的 A）、1 = 右邊那顆（Xbox 的 B）
+//   8 = Back/Select、9 = Start、12–15 = 十字鍵 上下左右
+const PAD_BUTTONS = [
+    [12, BTN.UP], [13, BTN.DOWN], [14, BTN.LEFT], [15, BTN.RIGHT],
+    [0, BTN.A], [1, BTN.B], [9, BTN.START], [8, BTN.SELECT],
+];
+const STICK_DEADZONE = 0.5;   // 搖桿推超過一半才算按方向鍵
+
+// 讀第 index 支手把，回傳和鍵盤一樣格式的 bit 狀態
+function readGamepad(index) {
+    const pad = navigator.getGamepads()[index];
+    if (!pad) return 0;
+
+    let b = 0;
+    for (const [padBtn, btn] of PAD_BUTTONS) {
+        if (pad.buttons[padBtn] && pad.buttons[padBtn].pressed) {
+            b |= (1 << btn);
+        }
+    }
+    // 左搖桿也當方向鍵用
+    const x = pad.axes[0] || 0;
+    const y = pad.axes[1] || 0;
+    if (x < -STICK_DEADZONE) b |= (1 << BTN.LEFT);
+    if (x >  STICK_DEADZONE) b |= (1 << BTN.RIGHT);
+    if (y < -STICK_DEADZONE) b |= (1 << BTN.UP);
+    if (y >  STICK_DEADZONE) b |= (1 << BTN.DOWN);
+    return b;
+}
+
+// 在網頁上顯示偵測到的手把，方便除錯
+const padInfo = () => document.getElementById("pad-info");
+window.addEventListener("gamepadconnected", (e) => {
+    padInfo().textContent =
+        `手把 ${e.gamepad.index + 1}：${e.gamepad.id}（配置：${e.gamepad.mapping || "非標準"}）`;
+});
+window.addEventListener("gamepaddisconnected", () => {
+    padInfo().textContent = "沒有偵測到手把（接上後要先按一個鍵，瀏覽器才會看到）";
+});
+
 async function start() {
     const response = await fetch("comet.wasm");
     const bytes = await response.arrayBuffer();
@@ -85,7 +126,12 @@ async function start() {
         if (acc > 250) acc = 250;
 
         while (acc >= FRAME_MS) {
-            engine.input_set(0, keys);
+            // 1 號玩家：鍵盤和第 1 支手把都能控制
+            engine.input_set(0, keys | readGamepad(0));
+            // 2–4 號玩家：第 2–4 支手把
+            for (let p = 1; p < 4; p++) {
+                engine.input_set(p, readGamepad(p));
+            }
             engine.engine_frame();
             acc -= FRAME_MS;
         }
