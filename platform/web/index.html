@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Comet</title>
+<style>
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #111;
+  }
+  /* canvas 本身是 320×240，用 CSS 放大 2 倍。
+     pixelated：放大時不要模糊，保持一格一格的像素 */
+  canvas {
+    width: 640px;
+    height: 480px;
+    image-rendering: pixelated;
+  }
+</style>
+</head>
+<body>
+<canvas id="screen" width="320" height="240"></canvas>
+<script src="main.js"></script>
+</body>
+</html>
