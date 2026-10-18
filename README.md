@@ -6,6 +6,25 @@ Nova One 的遊戲引擎。同一份 C 核心，編譯到三個平台：Mac（�
 
 **Comet Studio**（`make serve` 後開 `/studio.html`）：在瀏覽器裡寫遊戲，左邊程式碼、右邊立刻執行；可以一鍵把說明文件和程式碼複製給 AI，再把 AI 的回覆貼回來。
 
+- **單檔模式**：程式碼存在瀏覽器裡，適合小遊戲
+- **資料夾模式**（📁 開啟資料夾，需要 Chrome 或 Edge）：直接讀寫電腦上的專案資料夾，修改自動存回檔案；用 VS Code 等其他編輯器改檔案，Studio 也會自動重新載入
+
+## 多檔案專案
+
+大遊戲可以拆成好幾個檔案，在專案資料夾放一個 `comet.json`：
+
+```json
+{
+  "name": "我的遊戲",
+  "id": "作者/repo名稱",
+  "sources": ["src/util.lua", "src/battle.lua", "src/main.lua"],
+  "output": "build/game.lua"
+}
+```
+
+`sources` 依順序合併成一個遊戲檔（`output`）。Studio 的資料夾模式會自動合併；命令列用 `node tools/cart.mjs <專案資料夾>`。
+錯誤訊息會換算回原本的檔案和行號。
+
 ## 結構
 
 ```
@@ -24,12 +43,14 @@ platform/
   mac/               用預設按鍵跑 90 幀，最後一幀存成 PPM（測試用）
   web/
     comet.js         載入引擎、遊戲迴圈（遊玩頁和編輯器共用）
+    cart.js          多檔案專案合併成一個遊戲檔（編輯器和命令列共用）
     input.js         鍵盤、手把、觸控
     index.html       遊玩頁（手機可用）
     studio.html      編輯器 Comet Studio
     vendor/          CodeMirror（編輯器元件，已打包）
 tools/
   check_web.mjs      網頁版自動測試
+  cart.mjs           命令列版的遊戲檔合併工具
   editor/            重新打包 CodeMirror 用（平常不需要）
 ```
 
