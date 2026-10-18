@@ -9,12 +9,14 @@ static uint32_t frame_count = 0;
 void engine_init(void)
 {
     frame_count = 0;
+    gfx_reset();
     gfx_cls(0);
 }
 
 int engine_load(const char *src, size_t len)
 {
     frame_count = 0;
+    gfx_reset();   // 上一款遊戲的調色盤、相機、圖片都清掉
     // "=game"：錯誤訊息裡的檔名，例如 "game:12: attempt to call a nil value"
     return script_load(src, len, "=game");
 }

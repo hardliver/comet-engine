@@ -112,6 +112,111 @@ static int l_rnd(lua_State *L)
     return 1;
 }
 
+// ---- 調色盤、相機、圖片 ----
+
+// pal(index, r, g, b)：設定第 index 號顏色（0–255），r g b 是 0–255
+static int l_pal(lua_State *L)
+{
+    lua_Integer i = luaL_checkinteger(L, 1);
+    lua_Integer r = luaL_checkinteger(L, 2);
+    lua_Integer g = luaL_checkinteger(L, 3);
+    lua_Integer b = luaL_checkinteger(L, 4);
+    luaL_argcheck(L, i >= 0 && i <= 255, 1, "color index must be 0-255");
+    gfx_pal((int)i, (uint8_t)r, (uint8_t)g, (uint8_t)b);
+    return 0;
+}
+
+// camera(x, y)：之後的繪圖都往左上平移 (x, y)；camera() 歸零
+static int l_camera(lua_State *L)
+{
+    gfx_camera((int)luaL_optinteger(L, 1, 0), (int)luaL_optinteger(L, 2, 0));
+    return 0;
+}
+
+// base64 解碼：遊戲檔是文字檔，圖片資料用 base64 存成文字。
+// 每 4 個字元代表 3 個 byte。回傳解出幾個 byte，格式錯誤回傳 -1
+static int b64_value(char c)
+{
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+static long b64_decode(const char *in, size_t len, uint8_t *out, size_t out_max)
+{
+    size_t n = 0;
+    uint32_t acc = 0;
+    int bits = 0;
+    for (size_t i = 0; i < len; i++) {
+        char c = in[i];
+        if (c == '=' || c == '\n' || c == '\r' || c == ' ') continue;
+        int v = b64_value(c);
+        if (v < 0) return -1;
+        acc = (acc << 6) | (uint32_t)v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            if (n >= out_max) return -1;
+            out[n++] = (uint8_t)((acc >> bits) & 0xFF);
+        }
+    }
+    return (long)n;
+}
+
+// newimage(w, h, data, tile)：建立圖片，回傳圖片編號。
+// data 是 base64 文字，解開後是 w × h 個顏色編號（0 = 透明）。
+// 通常不用自己寫：comet.json 的 "images" 會自動產生這一行
+static int l_newimage(lua_State *L)
+{
+    lua_Integer w = luaL_checkinteger(L, 1);
+    lua_Integer h = luaL_checkinteger(L, 2);
+    size_t len;
+    const char *data = luaL_checklstring(L, 3, &len);
+    lua_Integer tile = luaL_optinteger(L, 4, 16);
+    luaL_argcheck(L, w > 0 && h > 0 && w <= 4096 && h <= 4096, 1, "bad image size");
+
+    size_t size = (size_t)w * (size_t)h;
+    // 暫時借用 Lua 的記憶體來放解碼結果，Lua 會自己回收
+    uint8_t *buf = lua_newuserdatauv(L, size, 0);
+    long n = b64_decode(data, len, buf, size);
+    if (n != (long)size) {
+        return luaL_error(L, "image data has %d pixels, expected %d", (int)n, (int)size);
+    }
+    int id = gfx_image_new((int)w, (int)h, buf, (int)tile);
+    if (id == 0) return luaL_error(L, "cannot create image (too many images or out of memory)");
+    lua_pushinteger(L, id);
+    return 1;
+}
+
+// spr(img, n, x, y, flip_x, flip_y)：畫圖片的第 n 格（小格大小在 newimage 時決定）
+static int l_spr(lua_State *L)
+{
+    gfx_spr((int)luaL_checkinteger(L, 1), (int)luaL_checkinteger(L, 2),
+            (int)luaL_checkinteger(L, 3), (int)luaL_checkinteger(L, 4),
+            lua_toboolean(L, 5), lua_toboolean(L, 6));
+    return 0;
+}
+
+// sspr(img, sx, sy, sw, sh, dx, dy, dw, dh, flip_x, flip_y)：
+// 畫圖片的任意範圍，可以放大縮小。dw、dh 省略就是原尺寸
+static int l_sspr(lua_State *L)
+{
+    int img = (int)luaL_checkinteger(L, 1);
+    int sx = (int)luaL_checkinteger(L, 2);
+    int sy = (int)luaL_checkinteger(L, 3);
+    int sw = (int)luaL_checkinteger(L, 4);
+    int sh = (int)luaL_checkinteger(L, 5);
+    int dx = (int)luaL_checkinteger(L, 6);
+    int dy = (int)luaL_checkinteger(L, 7);
+    int dw = (int)luaL_optinteger(L, 8, sw);
+    int dh = (int)luaL_optinteger(L, 9, sh);
+    gfx_sspr(img, sx, sy, sw, sh, dx, dy, dw, dh, lua_toboolean(L, 10), lua_toboolean(L, 11));
+    return 0;
+}
+
 static const luaL_Reg api[] = {
     { "cls",   l_cls   },
     { "pset",  l_pset  },
@@ -120,6 +225,11 @@ static const luaL_Reg api[] = {
     { "stick", l_stick },
     { "frame", l_frame },
     { "rnd",   l_rnd   },
+    { "pal",      l_pal      },
+    { "camera",   l_camera   },
+    { "newimage", l_newimage },
+    { "spr",      l_spr      },
+    { "sspr",     l_sspr     },
     { NULL, NULL }
 };
 

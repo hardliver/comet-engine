@@ -12,7 +12,7 @@ import {
 } from "./vendor/codemirror.js";
 import { createEngine, startLoop } from "./comet.js";
 import { setupKeyboard, readGamepad, merge } from "./input.js";
-import { buildCart, mapLine } from "./cart.js";
+import { buildCart, buildImages, imageFiles, mapLine, browserInflate } from "./cart.js";
 
 const STORAGE_KEY = "comet.studio.code";
 const $ = (id) => document.getElementById(id);
@@ -213,7 +213,7 @@ function currentCart() {
     if (!folder) return editor.state.doc.toString();
     const texts = {};
     for (const [path, f] of folder.files) texts[path] = f.text;
-    const { code, segments } = buildCart(folder.project, texts);
+    const { code, segments } = buildCart(folder.project, texts, folder.imagesCode);
     folder.segments = segments;
     folder.cart = code;
     return code;
@@ -255,11 +255,14 @@ canvas.addEventListener("pointerdown", () => canvas.focus());
 
 let folder = null;
 // folder = {
-//   dir:      資料夾的 handle
-//   project:  comet.json 的內容
-//   files:    Map(路徑 → { handle, state, text, savedText, dirty, lastModified })
-//   current:  目前編輯的檔案路徑
-//   segments: 合併後每個檔案在遊戲檔裡的行號範圍
+//   dir:        資料夾的 handle
+//   project:    comet.json 的內容
+//   projectMod: comet.json 的修改時間（被改了就整個重新開啟）
+//   files:      Map(路徑 → { state, text, savedText, dirty, lastModified })
+//   images:     Map(路徑 → { bytes, lastModified })：comet.json 裡 images 的 PNG
+//   imagesCode: 圖片轉成的 Lua 程式碼（圖片有變才重新轉換）
+//   current:    目前編輯的檔案路徑
+//   segments:   合併後每個檔案在遊戲檔裡的行號範圍
 // }
 
 // 依路徑取得檔案 handle，例如 "src/main.lua"。create = true 時順便建立資料夾和檔案
@@ -273,6 +276,25 @@ async function fileHandle(dir, path, create = false) {
 async function readText(dir, path) {
     const file = await (await fileHandle(dir, path)).getFile();
     return { text: await file.text(), lastModified: file.lastModified };
+}
+
+async function readBytes(dir, path) {
+    const file = await (await fileHandle(dir, path)).getFile();
+    return { bytes: new Uint8Array(await file.arrayBuffer()), lastModified: file.lastModified };
+}
+
+// 把 comet.json 的 images 轉成 Lua 程式碼（PNG → 顏色編號 → base64）
+async function rebuildImages() {
+    try {
+        folder.imagesCode = await buildImages(folder.project, async (p) => {
+            const img = folder.images.get(p);
+            if (!img) throw new Error(`找不到圖片 ${p}`);
+            return img.bytes;
+        }, browserInflate);
+    } catch (e) {
+        folder.imagesCode = "";
+        consoleAdd(`圖片轉換失敗：${e.message}`, "err");
+    }
 }
 
 async function writeText(dir, path, text) {
@@ -312,10 +334,16 @@ async function openFolder(dir) {
         return;
     }
 
-    let project;
+    let project, projectMod = 0;
     try {
-        project = JSON.parse((await readText(dir, "comet.json")).text);
+        const r = await readText(dir, "comet.json");
+        project = JSON.parse(r.text);
+        projectMod = r.lastModified;
     } catch (e) {
+        if (e instanceof SyntaxError) {
+            toast(`comet.json 格式錯誤：${e.message}`, 6000);
+            return;
+        }
         project = await createDefaultProject(dir);
     }
 
@@ -329,7 +357,17 @@ async function openFolder(dir) {
         }
     }
 
-    folder = { dir, project, files, current: null, segments: [] };
+    const images = new Map();
+    for (const path of imageFiles(project)) {
+        try {
+            images.set(path, await readBytes(dir, path));
+        } catch (e) {
+            toast(`找不到圖片 ${path}`, 5000);
+        }
+    }
+
+    folder = { dir, project, projectMod, files, images, imagesCode: "", current: null, segments: [] };
+    await rebuildImages();
     document.body.classList.add("folder-mode");
     $("files").hidden = false;
     $("project-name").textContent = project.name || dir.name;
@@ -405,7 +443,7 @@ async function newFile() {
     const src = folder.project.sources;
     const mainAt = src.findIndex((p) => p.endsWith("main.lua"));
     src.splice(mainAt >= 0 ? mainAt : src.length, 0, path);
-    await writeText(folder.dir, "comet.json", JSON.stringify(folder.project, null, 2) + "\n");
+    folder.projectMod = await writeText(folder.dir, "comet.json", JSON.stringify(folder.project, null, 2) + "\n");
 
     // Map 的順序要和 sources 一樣，分頁才會照合併順序排
     folder.files = new Map(src.filter((p) => folder.files.has(p)).map((p) => [p, folder.files.get(p)]));
@@ -434,6 +472,29 @@ setInterval(async () => {
             changed = true;
         } catch (e) { /* 檔案暫時讀不到，下次再試 */ }
     }
+    // 圖片被修改（例如用繪圖軟體存檔）：重新轉換
+    for (const [path, img] of folder.images) {
+        try {
+            const file = await (await fileHandle(folder.dir, path)).getFile();
+            if (file.lastModified === img.lastModified) continue;
+            folder.images.set(path, { bytes: new Uint8Array(await file.arrayBuffer()), lastModified: file.lastModified });
+            await rebuildImages();
+            changed = true;
+        } catch (e) {}
+    }
+
+    // comet.json 被修改（例如加了新圖片、新檔案）：整個重新開啟
+    try {
+        const file = await (await fileHandle(folder.dir, "comet.json")).getFile();
+        if (folder.projectMod && file.lastModified !== folder.projectMod) {
+            folder.projectMod = file.lastModified;
+            await saveNow();
+            await openFolder(folder.dir);
+            toast("comet.json 改變了，已重新開啟專案");
+            return;
+        }
+    } catch (e) {}
+
     if (changed) {
         renderTabs();
         run();

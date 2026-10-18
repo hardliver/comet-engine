@@ -18,11 +18,12 @@ Nova One 的遊戲引擎。同一份 C 核心，編譯到三個平台：Mac（�
   "name": "我的遊戲",
   "id": "作者/repo名稱",
   "sources": ["src/util.lua", "src/battle.lua", "src/main.lua"],
+  "images": { "town": "assets/tilemap.png" },
   "output": "build/game.lua"
 }
 ```
 
-`sources` 依順序合併成一個遊戲檔（`output`）。Studio 的資料夾模式會自動合併；命令列用 `node tools/cart.mjs <專案資料夾>`。
+`sources` 依順序合併成一個遊戲檔（`output`）；`images` 的 PNG 會轉成遊戲檔裡的圖片資料（遊戲裡用 `IMG.town`），顏色自動加進調色盤。Studio 的資料夾模式會自動合併；命令列用 `node tools/cart.mjs <專案資料夾>`。
 錯誤訊息會換算回原本的檔案和行號。
 
 ## 結構
@@ -44,6 +45,7 @@ platform/
   web/
     comet.js         載入引擎、遊戲迴圈（遊玩頁和編輯器共用）
     cart.js          多檔案專案合併成一個遊戲檔（編輯器和命令列共用）
+    png.js           讀 PNG 圖片（不依賴任何套件）
     input.js         鍵盤、手把、觸控（判斷按了什麼）
     touchpad.js      手機虛擬手把的位置、配置、自訂
     index.html       遊玩頁（手機可用）
@@ -85,6 +87,10 @@ function _draw()   end   -- 每幀一次：畫畫面
 | `stick(玩家, n)` | 搖桿 x, y（-127～127）；n = 0 左、1 右 |
 | `rnd(n)` | 0 到 n-1 的隨機整數（各平台結果相同） |
 | `frame()` | 目前第幾幀 |
+| `pal(色, r, g, b)` | 設定調色盤（0–255） |
+| `camera(x, y)` | 繪圖平移，用來捲動地圖 |
+| `spr(圖, n, x, y, 左右翻, 上下翻)` | 畫圖片的第 n 格 |
+| `sspr(圖, sx, sy, sw, sh, dx, dy, dw, dh, 左右翻, 上下翻)` | 畫圖片的任意範圍，可放大 |
 | `SCREEN_W`、`SCREEN_H` | 320、240 |
 
 - 座標、大小、顏色都要用整數（`//` 是整數除法）

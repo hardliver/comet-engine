@@ -1,15 +1,17 @@
 // gfx.c — 繪圖模組的實作
 // 這個檔案只做「把顏色編號寫進陣列」，不知道畫面最後會出現在哪裡。
 
+#include <stdlib.h>   // malloc、free（圖片的記憶體）
+#include <string.h>   // memcpy
+
 #include "gfx.h"
 
 // 畫面：每個像素 1 byte，存的是顏色編號（0–255）
 // static：只有這個檔案能直接碰它，別人只能透過函式
 static uint8_t framebuffer[SCREEN_W * SCREEN_H];
 
-// 調色盤：256 色，每色 R、G、B 各 1 byte
-// 只填前 16 色，其餘預設為 0（黑色）。正式調色盤留到規格 v0.1
-static uint8_t palette[256 * 3] = {
+// 預設調色盤：前 16 色，其餘是 0（黑色）。正式調色盤留到規格 v0.1
+static const uint8_t default_palette[16 * 3] = {
       0,   0,   0,   // 0  黑
      29,  43,  83,   // 1  深藍
     126,  37,  83,   // 2  深紫
@@ -28,15 +30,47 @@ static uint8_t palette[256 * 3] = {
     255, 204, 170,   // 15 膚色
 };
 
+// 目前的調色盤：256 色，每色 R、G、B 各 1 byte。遊戲可以用 pal() 改
+static uint8_t palette[256 * 3];
+
+// 相機位置
+static int cam_x = 0;
+static int cam_y = 0;
+
+// 圖片：寬、高、小格大小、像素（顏色編號）
+typedef struct {
+    int w, h, tile;
+    uint8_t *pixels;   // NULL 代表這個位置沒有圖片
+} Image;
+
+// 圖片編號從 1 開始，所以陣列多開一格，images[0] 不用
+static Image images[MAX_IMAGES + 1];
+
+void gfx_reset(void)
+{
+    memset(palette, 0, sizeof(palette));
+    memcpy(palette, default_palette, sizeof(default_palette));
+    cam_x = 0;
+    cam_y = 0;
+    for (int i = 1; i <= MAX_IMAGES; i++) {
+        free(images[i].pixels);   // free(NULL) 什麼都不做，是安全的
+        images[i].pixels = NULL;
+    }
+}
+
+// ============================================================
+// 基本繪圖
+// ============================================================
+
 void gfx_cls(uint8_t color)
 {
-    for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
-        framebuffer[i] = color;
-    }
+    memset(framebuffer, color, sizeof(framebuffer));
 }
 
 void gfx_pset(int x, int y, uint8_t color)
 {
+    x -= cam_x;
+    y -= cam_y;
     // 超出畫面就直接離開。C 不會幫你檢查陣列邊界，
     // 寫到陣列外面會默默蓋掉別的資料，這種 bug 最難找。
     if (x < 0 || x >= SCREEN_W || y < 0 || y >= SCREEN_H) {
@@ -47,6 +81,9 @@ void gfx_pset(int x, int y, uint8_t color)
 
 void gfx_rect(int x, int y, int w, int h, uint8_t color)
 {
+    x -= cam_x;
+    y -= cam_y;
+
     // 先算出矩形的右下角（不含）
     int x1 = x + w;
     int y1 = y + h;
@@ -64,6 +101,113 @@ void gfx_rect(int x, int y, int w, int h, uint8_t color)
         }
     }
 }
+
+// ============================================================
+// 調色盤、相機
+// ============================================================
+
+void gfx_pal(int index, uint8_t r, uint8_t g, uint8_t b)
+{
+    if (index < 0 || index > 255) return;
+    palette[index * 3 + 0] = r;
+    palette[index * 3 + 1] = g;
+    palette[index * 3 + 2] = b;
+}
+
+void gfx_camera(int x, int y)
+{
+    cam_x = x;
+    cam_y = y;
+}
+
+// ============================================================
+// 圖片
+// ============================================================
+
+static Image *get_image(int img)
+{
+    if (img < 1 || img > MAX_IMAGES || images[img].pixels == NULL) return NULL;
+    return &images[img];
+}
+
+int gfx_image_new(int w, int h, const uint8_t *pixels, int tile)
+{
+    if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return 0;
+
+    // 找一個空位
+    int id = 0;
+    for (int i = 1; i <= MAX_IMAGES; i++) {
+        if (images[i].pixels == NULL) { id = i; break; }
+    }
+    if (id == 0) return 0;   // 圖片太多了
+
+    uint8_t *copy = malloc((size_t)w * (size_t)h);
+    if (copy == NULL) return 0;   // 記憶體不夠
+    memcpy(copy, pixels, (size_t)w * (size_t)h);
+
+    images[id].w = w;
+    images[id].h = h;
+    images[id].tile = tile > 0 ? tile : 16;
+    images[id].pixels = copy;
+    return id;
+}
+
+int gfx_image_w(int img) { Image *im = get_image(img); return im ? im->w : 0; }
+int gfx_image_h(int img) { Image *im = get_image(img); return im ? im->h : 0; }
+
+void gfx_sspr(int img, int sx, int sy, int sw, int sh,
+              int dx, int dy, int dw, int dh, int flip_x, int flip_y)
+{
+    Image *im = get_image(img);
+    if (im == NULL || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+
+    dx -= cam_x;
+    dy -= cam_y;
+
+    // 逐一走過「畫面上」要畫的每個點，反推它對應圖片的哪個像素。
+    // 這樣放大、縮小都是同一套算法（最近鄰取樣，像素保持方塊狀）
+    for (int y = 0; y < dh; y++) {
+        int py = dy + y;
+        if (py < 0 || py >= SCREEN_H) continue;
+
+        int ty = y * sh / dh;              // 對應圖片範圍內的第幾列
+        if (flip_y) ty = sh - 1 - ty;
+        int iy = sy + ty;
+        if (iy < 0 || iy >= im->h) continue;
+
+        for (int x = 0; x < dw; x++) {
+            int px = dx + x;
+            if (px < 0 || px >= SCREEN_W) continue;
+
+            int tx = x * sw / dw;
+            if (flip_x) tx = sw - 1 - tx;
+            int ix = sx + tx;
+            if (ix < 0 || ix >= im->w) continue;
+
+            uint8_t c = im->pixels[iy * im->w + ix];
+            if (c != 0) {                  // 0 是透明，不畫
+                framebuffer[py * SCREEN_W + px] = c;
+            }
+        }
+    }
+}
+
+void gfx_spr(int img, int n, int dx, int dy, int flip_x, int flip_y)
+{
+    Image *im = get_image(img);
+    if (im == NULL || n < 0) return;
+
+    int t = im->tile;
+    int cols = im->w / t;                  // 一列有幾格
+    if (cols <= 0) return;
+    int sx = (n % cols) * t;
+    int sy = (n / cols) * t;
+    gfx_sspr(img, sx, sy, t, t, dx, dy, t, t, flip_x, flip_y);
+}
+
+// ============================================================
+// 給平台層讀取用
+// ============================================================
 
 const uint8_t *gfx_framebuffer(void)
 {
