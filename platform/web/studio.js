@@ -14,6 +14,7 @@ import { createEngine, startLoop } from "./comet.js";
 import { setupKeyboard, readGamepad, merge } from "./input.js";
 import { buildCart, buildImages, buildMaps, imageEntries, imageFiles, mapFiles, mapLine, browserInflate } from "./cart.js";
 import { createImageViewer } from "./imageview.js";
+import { createMapEditor, newMapText } from "./mapedit.js";
 import { buildFont, fontSummary } from "./font.js";
 
 const STORAGE_KEY = "comet.studio.code";
@@ -295,14 +296,50 @@ const viewer = createImageViewer({
     },
 });
 
+// 專案的圖片：[{ name, file, tile, bytes }]（圖片檢視器、地圖編輯器用）
+function projectImages() {
+    return imageEntries(folder.project)
+        .filter((e) => folder.images.has(e.file))
+        .map((e) => ({ ...e, bytes: folder.images.get(e.file).bytes }));
+}
+
 function refreshImageViewer() {
     if (!folder) {
         viewer.setImages([], "單檔模式沒有圖片。用「開啟資料夾」打開有 comet.json 的專案，就能在這裡看圖片和格子編號");
         return;
     }
-    viewer.setImages(imageEntries(folder.project)
-        .filter((e) => folder.images.has(e.file))
-        .map((e) => ({ ...e, bytes: folder.images.get(e.file).bytes })));
+    viewer.setImages(projectImages());
+}
+
+// 地圖編輯器：點檔案分頁裡的地圖時，取代左邊的程式碼編輯器
+const mapEditor = createMapEditor({ root: $("mapedit"), inflate: browserInflate, toast, onChange: mapChanged });
+let mapSaveTimer = null;
+
+const isMapOpen = () => folder && folder.maps.has(folder.current);
+
+// 地圖被修改：馬上重新合併（遊戲畫面更新），0.5 秒後存檔
+async function mapChanged(text) {
+    const m = folder.maps.get(folder.current);
+    m.text = text;
+    m.dirty = true;
+    renderTabs();
+    await rebuildMaps();
+    if ($("auto-run").checked) {
+        clearTimeout(autoRunTimer);
+        autoRunTimer = setTimeout(autoRun, 300);
+    }
+    clearTimeout(mapSaveTimer);
+    mapSaveTimer = setTimeout(saveMaps, 500);
+}
+
+async function saveMaps() {
+    clearTimeout(mapSaveTimer);
+    for (const [path, m] of folder.maps) {
+        if (!m.dirty) continue;
+        m.lastModified = await writeText(folder.dir, path, m.text);
+        m.dirty = false;
+    }
+    renderTabs();
 }
 
 // 字型（c11.bin，330 KB）：開啟 Studio 時讀一次。讀不到的話，用 text() 的遊戲會出錯，其他照常
@@ -419,6 +456,7 @@ async function rebuildImages() {
         consoleAdd(`圖片轉換失敗：${e.message}`, "err");
     }
     refreshImageViewer();
+    if (isMapOpen()) openFile(folder.current);
 }
 
 // 把 comet.json 的 maps 轉成 Lua 程式碼。格式有錯時記下原因，執行時顯示
@@ -530,10 +568,23 @@ async function openFolder(dir) {
 }
 
 async function openFile(path) {
-    if (!folder.files.has(path)) return;
-    if (folder.current) folder.files.get(folder.current).state = editor.state;   // 保留目前檔案的游標、復原紀錄
+    const isMap = folder.maps.has(path);
+    if (!folder.files.has(path) && !isMap) return;
+    // 保留目前程式碼檔的游標、復原紀錄（目前是地圖就不用）
+    if (folder.files.has(folder.current)) folder.files.get(folder.current).state = editor.state;
     folder.current = path;
-    editor.setState(folder.files.get(path).state);
+    $("editor").hidden = isMap;
+    $("mapedit").hidden = !isMap;
+    if (isMap) {
+        try {
+            await mapEditor.open(path, folder.maps.get(path).text, projectImages());
+            mapEditor.focus();
+        } catch (e) {
+            toast(`地圖打不開：${e.message}`, 6000);
+        }
+    } else {
+        editor.setState(folder.files.get(path).state);
+    }
     renderTabs();
     showErrorMark();
 }
@@ -549,11 +600,47 @@ function renderTabs() {
         b.addEventListener("click", () => openFile(path));
         bar.appendChild(b);
     }
+    for (const [path, m] of folder.maps) {
+        const b = document.createElement("button");
+        b.textContent = "🗺 " + path.replace(/^maps\//, "");
+        b.title = path;
+        b.className = (path === folder.current ? "on " : "") + (m.dirty ? "dirty" : "");
+        b.addEventListener("click", () => openFile(path));
+        bar.appendChild(b);
+    }
     const add = document.createElement("button");
     add.textContent = "＋ 新檔案";
     add.className = "add";
     add.addEventListener("click", newFile);
     bar.appendChild(add);
+    const addMap = document.createElement("button");
+    addMap.textContent = "＋ 新地圖";
+    addMap.className = "add";
+    addMap.addEventListener("click", newMap);
+    bar.appendChild(addMap);
+}
+
+// 新地圖：maps/名稱.json，20 × 15 格（剛好一個畫面），地面鋪滿第一張圖的第 0 格，
+// 自動加進 comet.json 的 maps
+async function newMap() {
+    const imgs = imageEntries(folder.project);
+    if (imgs.length === 0) { toast("先在 comet.json 的 images 加上圖片，才能畫地圖"); return; }
+    let name = (prompt("新地圖的名稱（英文、數字、底線，例如 camp；遊戲裡用 MAP.camp 取得）") || "").trim();
+    if (!name) return;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) { toast("地圖名稱只能用英文、數字、底線"); return; }
+    const path = `maps/${name}.json`;
+    if (folder.maps.has(path)) { openFile(path); return; }
+
+    // 用得上的圖：和第一張圖的小格一樣大的，最多 4 張
+    const tilesets = imgs.filter((e) => e.tile === imgs[0].tile).slice(0, 4).map((e) => e.name);
+    const text = newMapText(20, 15, tilesets, 1);
+    const lastModified = await writeText(folder.dir, path, text);
+    folder.maps.set(path, { text, lastModified });
+    folder.project.maps = { ...(folder.project.maps || {}), [name]: path };
+    folder.projectMod = await writeText(folder.dir, "comet.json", JSON.stringify(folder.project, null, 2) + "\n");
+    await rebuildMaps();
+    await openFile(path);
+    toast(`已建立 ${path}，遊戲裡用 MAP.${name} 取得`);
 }
 
 // 把有修改的檔案寫回資料夾
@@ -566,7 +653,7 @@ async function saveNow() {
         f.savedText = f.text;
         f.dirty = false;
     }
-    renderTabs();
+    await saveMaps();
 }
 
 // 合併後的遊戲檔也寫一份到 comet.json 的 output（例如 build/wildkin.lua），
@@ -636,9 +723,10 @@ setInterval(async () => {
     for (const [path, m] of folder.maps) {
         try {
             const file = await (await fileHandle(folder.dir, path)).getFile();
-            if (file.lastModified === m.lastModified) continue;
+            if (file.lastModified === m.lastModified || m.dirty) continue;
             folder.maps.set(path, { text: await file.text(), lastModified: file.lastModified });
             await rebuildMaps();
+            if (path === folder.current) await openFile(path);
             changed = true;
         } catch (e) {}
     }
