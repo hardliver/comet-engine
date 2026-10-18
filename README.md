@@ -18,7 +18,7 @@ platform/
 
 ```
 make            # Mac 版：再執行 ./build/mac，產生 out.ppm
-make serve      # 網頁版：瀏覽器開 http://localhost:8000
+make serve      # 網頁版：瀏覽器開 http://localhost:8420
 ```
 
 網頁版需要 emscripten（`brew install emscripten`）。

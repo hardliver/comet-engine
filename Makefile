@@ -1,7 +1,8 @@
 # 用法（在 comet 資料夾裡）：
 #   make         編譯 Mac 版，執行 ./build/mac 產生 out.ppm
 #   make web     編譯網頁版到 build/web/
-#   make serve   在 http://localhost:8000 開啟網頁版
+#   make serve   在 http://localhost:8420 開啟網頁版
+#                （換埠號：make serve PORT=9000）
 #   make clean   清除編譯結果
 #
 # -Wall -Wextra：開啟警告，讓編譯器幫你抓可疑的寫法
@@ -14,6 +15,9 @@ HEADERS = core/gfx.h examples/test_scene.h
 
 # 網頁版要讓 JavaScript 呼叫的 C 函式（名稱前面要加底線）
 WEB_EXPORTS = _test_scene_draw,_gfx_framebuffer,_gfx_palette
+
+# 網頁伺服器的埠號；?= 代表指令列沒有指定時才用這個值
+PORT ?= 8420
 
 build/mac: $(SHARED) $(HEADERS) platform/mac/main.c
 	mkdir -p build
@@ -29,7 +33,7 @@ web: $(SHARED) $(HEADERS) platform/web/index.html platform/web/main.js
 	cp platform/web/index.html platform/web/main.js build/web/
 
 serve: web
-	python3 -m http.server 8000 --directory build/web
+	python3 -m http.server $(PORT) --directory build/web
 
 clean:
 	rm -rf build out.ppm
