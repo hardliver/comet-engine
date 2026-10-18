@@ -12,7 +12,9 @@ import {
 } from "./vendor/codemirror.js";
 import { createEngine, startLoop } from "./comet.js";
 import { setupKeyboard, readGamepad, merge } from "./input.js";
-import { buildCart, buildImages, imageFiles, mapLine, browserInflate } from "./cart.js";
+import { buildCart, buildImages, buildMaps, imageEntries, imageFiles, mapFiles, mapLine, browserInflate } from "./cart.js";
+import { createImageViewer } from "./imageview.js";
+import { buildFont, fontSummary } from "./font.js";
 
 const STORAGE_KEY = "comet.studio.code";
 const $ = (id) => document.getElementById(id);
@@ -67,21 +69,37 @@ function consoleAdd(text, kind = "") {
 // 引擎印出的每一行都會到這裡。
 // Lua 的錯誤訊息長這樣："game:12: attempt to call a nil value"。
 // 資料夾模式下，遊戲檔是好幾個檔案合併的，要把行號換回原本的檔案和行號
-let errorAt = null;   // { path, line }：目前的錯誤位置（單檔模式 path 是 null）
+let errorAt = null;    // { path, line }：執行時的錯誤位置（單檔模式 path 是 null）
+let syntaxAt = null;   // { path, line }：打字時發現的語法錯誤位置
+
+// 遊戲檔的第 n 行 → 原本是哪個檔案的第幾行
+function locate(cartLine) {
+    const where = { path: null, line: cartLine };
+    return folder ? mapLine(folder.segments, cartLine) || where : where;
+}
+
+function label(where) {
+    return where.path ? `${where.path} 第 ${where.line} 行` : `第 ${where.line} 行`;
+}
+
+// 拆開 Lua 的錯誤訊息 "game:12: 'end' expected (to close 'function' at line 5) near <eof>"
+// 回傳 { where, text }；訊息中間的 "at line 5" 也換成原本的檔案和行號。不是這種格式回傳 null
+function parseError(msg) {
+    const m = msg.match(/^game:(\d+):/);
+    if (!m) return null;
+    const text = msg.slice(m[0].length).trim()
+        .replace(/at line (\d+)/g, (_, n) => `at ${label(locate(Number(n)))}`);
+    return { where: locate(Number(m[1])), text };
+}
 
 function onLog(msg) {
-    const m = msg.match(/^game:(\d+):/);
-    if (!m) {
+    const e = parseError(msg);
+    if (!e) {
         consoleAdd(msg);
         return;
     }
-    const cartLine = Number(m[1]);
-    const text = msg.slice(m[0].length).trim();
-    let where = { path: null, line: cartLine };
-    if (folder) where = mapLine(folder.segments, cartLine) || where;
-
-    const label = where.path ? `${where.path} 第 ${where.line} 行` : `第 ${where.line} 行`;
-    const div = consoleAdd(`${label}出錯：${text}`, "err");
+    const where = e.where;
+    const div = consoleAdd(`${label(where)}出錯：${e.text}`, "err");
     div.addEventListener("click", () => jumpTo(where));
     errorAt = where;
     showErrorMark();
@@ -113,11 +131,45 @@ const errorLineField = StateField.define({
     provide: (f) => EditorView.decorations.from(f),
 });
 
-// 目前畫面上的檔案如果就是出錯的檔案，標出錯誤行
+// 語法錯誤那一行：橘色波浪底線
+const setSyntaxLine = StateEffect.define();
+const syntaxLineField = StateField.define({
+    create: () => Decoration.none,
+    update(deco, tr) {
+        deco = deco.map(tr.changes);
+        for (const e of tr.effects) {
+            if (!e.is(setSyntaxLine)) continue;
+            if (e.value === null) {
+                deco = Decoration.none;
+            } else {
+                const n = Math.min(Math.max(e.value, 1), tr.state.doc.lines);
+                const from = tr.state.doc.line(n).from;
+                deco = Decoration.set([Decoration.line({ class: "cm-syntax-line" }).range(from)]);
+            }
+        }
+        return deco;
+    },
+    provide: (f) => EditorView.decorations.from(f),
+});
+
+// 目前畫面上的檔案如果就是出錯的檔案，標出錯誤行（執行錯誤、語法錯誤各自標）
 function showErrorMark() {
     const here = folder ? folder.current : null;
     const line = errorAt && errorAt.path === here ? errorAt.line : null;
-    editor.dispatch({ effects: setErrorLine.of(line) });
+    const sline = syntaxAt && syntaxAt.path === here ? syntaxAt.line : null;
+    editor.dispatch({ effects: [setErrorLine.of(line), setSyntaxLine.of(sline)] });
+}
+
+// 編輯器下方的語法錯誤提示。text = null 代表沒有錯誤
+function showSyntax(where, text) {
+    syntaxAt = where;
+    const bar = $("syntax-msg");
+    bar.hidden = text === null;
+    if (text !== null) {
+        bar.textContent = `${where ? label(where) : ""}語法錯誤：${text}（遊戲繼續執行上一個版本）`;
+        bar.onclick = () => where && jumpTo(where);
+    }
+    showErrorMark();
 }
 
 async function jumpTo(where) {
@@ -145,6 +197,7 @@ function makeState(doc) {
             indentUnit.of("  "),
             oneDark,
             errorLineField,
+            syntaxLineField,
             keymap.of([
                 indentWithTab,
                 { key: "Mod-Enter", run: () => { run(); return true; } },
@@ -190,8 +243,30 @@ function onEdit(text) {
     }
     if ($("auto-run").checked) {
         clearTimeout(autoRunTimer);
-        autoRunTimer = setTimeout(run, 700);
+        autoRunTimer = setTimeout(autoRun, 700);
     }
+}
+
+// 自動重新執行（停止打字、其他編輯器存檔時）：先只檢查語法。
+// 打到一半的程式通常有語法錯誤，這時不重新執行，遊戲繼續跑上一個版本，
+// 只在編輯器標出錯誤的地方。語法正確才真的重新執行
+function autoRun() {
+    clearTimeout(autoRunTimer);
+    let code;
+    try {
+        code = currentCart();
+    } catch (e) {
+        showSyntax(null, e.message);   // 例如 comet.json 列了不存在的檔案
+        return;
+    }
+    const err = engine.check(code);
+    if (err) {
+        const e = parseError(err);
+        showSyntax(e ? e.where : null, e ? e.text : err);
+        return;
+    }
+    showSyntax(null, null);
+    run();
 }
 
 // ============================================================
@@ -208,12 +283,56 @@ function getInput(player) {
 }
 const loop = startLoop(engine, canvas, getInput);
 
+// 圖片檢視器（下方的「圖片」分頁）：點格子複製 spr(...)
+const viewer = createImageViewer({
+    select: $("img-select"),
+    canvas: $("img-canvas"),
+    info: $("img-info"),
+    inflate: browserInflate,
+    onPick: async (code) => {
+        await copyText(code);
+        toast(`已複製：${code}`);
+    },
+});
+
+function refreshImageViewer() {
+    if (!folder) {
+        viewer.setImages([], "單檔模式沒有圖片。用「開啟資料夾」打開有 comet.json 的專案，就能在這裡看圖片和格子編號");
+        return;
+    }
+    viewer.setImages(imageEntries(folder.project)
+        .filter((e) => folder.images.has(e.file))
+        .map((e) => ({ ...e, bytes: folder.images.get(e.file).bytes })));
+}
+
+// 字型（c11.bin，330 KB）：開啟 Studio 時讀一次。讀不到的話，用 text() 的遊戲會出錯，其他照常
+const fontBytes = await fetch("fonts/c11.bin")
+    .then((r) => (r.ok ? r.arrayBuffer() : null))
+    .then((b) => (b ? new Uint8Array(b) : null))
+    .catch(() => null);
+let fontInfo = "";   // 這次合併用了幾個字（run() 印在主控台）
+
+function fontFor(files) {
+    if (!fontBytes) return "";
+    const font = buildFont(files, fontBytes);
+    fontInfo = fontSummary(font.stats);
+    return font.code;
+}
+
 // 目前要執行的遊戲檔：單檔模式就是編輯器的內容；資料夾模式是所有檔案合併的結果
 function currentCart() {
-    if (!folder) return editor.state.doc.toString();
+    fontInfo = "";
+    if (!folder) {
+        // 單檔模式：字型接在最後面，原本的行號才不會跑掉。
+        // 檔案最上層的程式碼會先全部執行完，引擎才呼叫 _init，所以放最後也來得及
+        const doc = editor.state.doc.toString();
+        const fontCode = fontFor({ "main.lua": doc });
+        return fontCode ? `${doc}\n\n${fontCode}\n` : doc;
+    }
     const texts = {};
     for (const [path, f] of folder.files) texts[path] = f.text;
-    const { code, segments } = buildCart(folder.project, texts, folder.imagesCode);
+    if (folder.mapsError) throw new Error(folder.mapsError);   // 地圖檔格式有錯：顯示原因，不執行
+    const { code, segments } = buildCart(folder.project, texts, folder.imagesCode, fontFor(texts), folder.mapsCode);
     folder.segments = segments;
     folder.cart = code;
     return code;
@@ -224,7 +343,7 @@ function run() {
     clearTimeout(autoRunTimer);
     consoleClear();
     errorAt = null;
-    showErrorMark();
+    showSyntax(null, null);
     let code;
     try {
         code = currentCart();
@@ -234,6 +353,7 @@ function run() {
     }
     const err = engine.load(code);
     if (!err) consoleAdd("▶ 遊戲已重新開始", "info");
+    if (fontInfo) consoleAdd(fontInfo, "info");
     if (folder && folder.project.output) writeOutput();
 }
 
@@ -254,6 +374,7 @@ canvas.addEventListener("pointerdown", () => canvas.focus());
 // 網頁就能直接讀寫裡面的檔案（Chrome、Edge 支援；Safari、Firefox 目前不支援）。
 
 let folder = null;
+refreshImageViewer();   // 要在 folder 宣告之後才能呼叫（let 在宣告之前不能用）
 // folder = {
 //   dir:        資料夾的 handle
 //   project:    comet.json 的內容
@@ -261,6 +382,8 @@ let folder = null;
 //   files:      Map(路徑 → { state, text, savedText, dirty, lastModified })
 //   images:     Map(路徑 → { bytes, lastModified })：comet.json 裡 images 的 PNG
 //   imagesCode: 圖片轉成的 Lua 程式碼（圖片有變才重新轉換）
+//   maps:       Map(路徑 → { text, lastModified })：comet.json 裡 maps 的 JSON
+//   mapsCode:   地圖轉成的 Lua 程式碼；mapsError：地圖檔有錯時的訊息
 //   current:    目前編輯的檔案路徑
 //   segments:   合併後每個檔案在遊戲檔裡的行號範圍
 // }
@@ -294,6 +417,22 @@ async function rebuildImages() {
     } catch (e) {
         folder.imagesCode = "";
         consoleAdd(`圖片轉換失敗：${e.message}`, "err");
+    }
+    refreshImageViewer();
+}
+
+// 把 comet.json 的 maps 轉成 Lua 程式碼。格式有錯時記下原因，執行時顯示
+async function rebuildMaps() {
+    try {
+        folder.mapsCode = await buildMaps(folder.project, async (p) => {
+            const m = folder.maps.get(p);
+            if (!m) throw new Error(`找不到地圖檔 ${p}`);
+            return m.text;
+        });
+        folder.mapsError = null;
+    } catch (e) {
+        folder.mapsCode = "";
+        folder.mapsError = e.message;
     }
 }
 
@@ -366,8 +505,19 @@ async function openFolder(dir) {
         }
     }
 
-    folder = { dir, project, projectMod, files, images, imagesCode: "", current: null, segments: [] };
+    const maps = new Map();
+    for (const path of mapFiles(project)) {
+        try {
+            maps.set(path, await readText(dir, path));
+        } catch (e) {
+            toast(`找不到地圖 ${path}`, 5000);
+        }
+    }
+
+    folder = { dir, project, projectMod, files, images, imagesCode: "", maps, mapsCode: "", mapsError: null,
+               current: null, segments: [] };
     await rebuildImages();
+    await rebuildMaps();
     document.body.classList.add("folder-mode");
     $("files").hidden = false;
     $("project-name").textContent = project.name || dir.name;
@@ -482,6 +632,16 @@ setInterval(async () => {
             changed = true;
         } catch (e) {}
     }
+    // 地圖檔被修改（地圖編輯器存檔、手動改 JSON）：重新轉換
+    for (const [path, m] of folder.maps) {
+        try {
+            const file = await (await fileHandle(folder.dir, path)).getFile();
+            if (file.lastModified === m.lastModified) continue;
+            folder.maps.set(path, { text: await file.text(), lastModified: file.lastModified });
+            await rebuildMaps();
+            changed = true;
+        } catch (e) {}
+    }
 
     // comet.json 被修改（例如加了新圖片、新檔案）：整個重新開啟
     try {
@@ -497,7 +657,7 @@ setInterval(async () => {
 
     if (changed) {
         renderTabs();
-        run();
+        autoRun();
         toast("偵測到檔案被修改，已重新載入");
     }
 }, 1500);
@@ -621,8 +781,7 @@ $("btn-ai").addEventListener("click", async () => {
 
 function showTab(name) {
     document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
-    $("console").hidden = name !== "console";
-    $("api").hidden = name !== "api";
+    document.querySelectorAll(".tab-body").forEach((el) => { el.hidden = el.id !== name; });
 }
 document.querySelectorAll(".tabs button").forEach((b) => {
     b.addEventListener("click", () => showTab(b.dataset.tab));

@@ -13,6 +13,10 @@
 // name 是錯誤訊息裡顯示的檔名。成功回傳 0
 int script_load(const char *src, size_t len, const char *name);
 
+// 只編譯、不執行：檢查語法。用一個暫時的 Lua 環境，不影響正在執行的遊戲。
+// 沒錯回傳 0；有錯回傳 1，錯誤訊息寫進 err（最多 err_size byte，含結尾的 0）
+int script_check(const char *src, size_t len, const char *name, char *err, size_t err_size);
+
 // 呼叫遊戲裡名叫 fn 的全域函式；不存在就跳過
 void script_call(const char *fn);
 

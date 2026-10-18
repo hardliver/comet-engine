@@ -4,6 +4,7 @@
 //   引擎 → Lua：呼叫遊戲的 _init、_update、_draw（script_call）
 //   Lua → 引擎：遊戲呼叫 cls、rect、btn 等，實際執行的是這裡的 C 函式
 
+#include <stdio.h>    // snprintf
 #include <string.h>
 
 #include "lua.h"
@@ -13,6 +14,7 @@
 #include "script.h"
 #include "engine.h"
 #include "gfx.h"
+#include "map.h"
 #include "input.h"
 #include "platform.h"
 
@@ -217,6 +219,153 @@ static int l_sspr(lua_State *L)
     return 0;
 }
 
+// newfont(height, count, data)：載入字型，取代原本的字型。
+// data 是 base64，解開後是 count 個字、每個字 5 + height × 2 byte。
+// 通常不用自己寫：遊戲有用到 text() 時，合併工具會自動產生這一行
+static int l_newfont(lua_State *L)
+{
+    lua_Integer height = luaL_checkinteger(L, 1);
+    lua_Integer count = luaL_checkinteger(L, 2);
+    size_t len;
+    const char *data = luaL_checklstring(L, 3, &len);
+    luaL_argcheck(L, height >= 1 && height <= 32, 1, "bad font height");
+    luaL_argcheck(L, count >= 1 && count <= 65535, 2, "bad glyph count");
+
+    size_t size = (size_t)count * (size_t)(5 + height * 2);
+    uint8_t *buf = lua_newuserdatauv(L, size, 0);   // 暫時借用 Lua 的記憶體，Lua 會自己回收
+    long n = b64_decode(data, len, buf, size);
+    if (n != (long)size) {
+        return luaL_error(L, "font data has %d bytes, expected %d", (int)n, (int)size);
+    }
+    int r = gfx_font_new((int)height, (int)count, buf);
+    if (r == -2) return luaL_error(L, "font glyphs are not sorted by code point");
+    if (r != 0) return luaL_error(L, "cannot load font (out of memory)");
+    return 0;
+}
+
+// 沒有字型時呼叫 text()：通常是遊戲檔沒有經過合併工具
+static void check_font(lua_State *L)
+{
+    if (!gfx_font_loaded()) {
+        luaL_error(L, "no font loaded: build the game with Comet Studio or tools/cart.mjs, "
+                      "which adds the glyphs text() needs");
+    }
+}
+
+// text(s, x, y, color)：畫文字，回傳寬度（像素）。color 省略時是 7（白）。
+// s 也可以是數字，例如 text(hp, 10, 10)
+static int l_text(lua_State *L)
+{
+    check_font(L);
+    size_t len;
+    const char *s = luaL_checklstring(L, 1, &len);
+    lua_Integer x = luaL_checkinteger(L, 2);
+    lua_Integer y = luaL_checkinteger(L, 3);
+    lua_Integer c = luaL_optinteger(L, 4, 7);
+    lua_pushinteger(L, gfx_text(s, len, (int)x, (int)y, (uint8_t)c));
+    return 1;
+}
+
+// textw(s)：文字畫出來會有多寬（像素），不畫。用來置中、換行
+static int l_textw(lua_State *L)
+{
+    check_font(L);
+    size_t len;
+    const char *s = luaL_checklstring(L, 1, &len);
+    lua_pushinteger(L, gfx_text_width(s, len));
+    return 1;
+}
+
+// ---- 地圖 ----
+
+// newmap(w, h, { 圖片, ... }, { 圖層名稱 = "base64", ... })：建立地圖，回傳地圖編號。
+// 每個圖層解開後是 w × h 個格子編號，每個 2 byte。
+// 通常不用自己寫：comet.json 的 "maps" 會自動產生這一行
+static int l_newmap(lua_State *L)
+{
+    lua_Integer w = luaL_checkinteger(L, 1);
+    lua_Integer h = luaL_checkinteger(L, 2);
+    luaL_checktype(L, 3, LUA_TTABLE);
+    luaL_checktype(L, 4, LUA_TTABLE);
+    luaL_argcheck(L, w > 0 && h > 0 && w <= 1024 && h <= 1024, 1, "bad map size");
+
+    // 第 3 個參數：用了哪些圖。lua_geti 取出表格的第 i 個元素放到堆疊最上面
+    int imgs[MAX_TILESETS];
+    int n = (int)luaL_len(L, 3);
+    luaL_argcheck(L, n >= 1 && n <= MAX_TILESETS, 3, "a map uses 1 to 4 images");
+    for (int i = 0; i < n; i++) {
+        lua_geti(L, 3, i + 1);
+        imgs[i] = (int)luaL_checkinteger(L, -1);
+        lua_pop(L, 1);
+    }
+    int m = map_new((int)w, (int)h, imgs, n);
+    if (m == -1) return luaL_error(L, "all images of a map must have the same tile size");
+    if (m == 0) return luaL_error(L, "cannot create map (bad image, too many maps or out of memory)");
+
+    // 第 4 個參數：圖層。lua_next 一個一個走過表格的「名稱 = 資料」
+    size_t size = (size_t)w * (size_t)h * 2;
+    lua_pushnil(L);
+    while (lua_next(L, 4) != 0) {               // 堆疊：... 名稱 資料
+        const char *name = luaL_checkstring(L, -2);
+        size_t len;
+        const char *data = luaL_checklstring(L, -1, &len);
+        uint8_t *buf = lua_newuserdatauv(L, size, 0);
+        if (b64_decode(data, len, buf, size) != (long)size) {
+            return luaL_error(L, "map layer '%s' has wrong size", name);
+        }
+        int r = map_add_layer(m, name, buf);
+        if (r == -2) return luaL_error(L, "map layer '%s' uses a tile number larger than its images have", name);
+        if (r != 0) return luaL_error(L, "cannot add map layer '%s'", name);
+        lua_pop(L, 2);                          // 拿掉 buf 和資料，留下名稱給 lua_next 找下一個
+    }
+    lua_pushinteger(L, m);
+    return 1;
+}
+
+// map_get 等函式回傳負數代表找不到地圖或圖層：變成清楚的錯誤訊息
+static void check_map_result(lua_State *L, int r, const char *layer)
+{
+    if (r == -2) luaL_error(L, "map does not exist");
+    if (r == -1) luaL_error(L, "map has no layer '%s'", layer);
+}
+
+// map(地圖, 圖層, ox, oy)：畫一個圖層，地圖左上角放在 (ox, oy)（省略是 0, 0）
+static int l_map(lua_State *L)
+{
+    int m = (int)luaL_checkinteger(L, 1);
+    const char *layer = luaL_checkstring(L, 2);
+    int ox = (int)luaL_optinteger(L, 3, 0);
+    int oy = (int)luaL_optinteger(L, 4, 0);
+    check_map_result(L, map_draw(m, layer, ox, oy), layer);
+    return 0;
+}
+
+// mget(地圖, 圖層, cx, cy)：第 cx 欄、第 cy 列那一格的編號（0 = 空的，地圖外面也是 0）
+static int l_mget(lua_State *L)
+{
+    const char *layer = luaL_checkstring(L, 2);
+    int r = map_get((int)luaL_checkinteger(L, 1), layer,
+                    (int)luaL_checkinteger(L, 3), (int)luaL_checkinteger(L, 4));
+    check_map_result(L, r, layer);
+    lua_pushinteger(L, r);
+    return 1;
+}
+
+// mset(地圖, 圖層, cx, cy, 編號)：改一格
+static int l_mset(lua_State *L)
+{
+    const char *layer = luaL_checkstring(L, 2);
+    int r = map_set((int)luaL_checkinteger(L, 1), layer,
+                    (int)luaL_checkinteger(L, 3), (int)luaL_checkinteger(L, 4),
+                    (int)luaL_checkinteger(L, 5));
+    check_map_result(L, r, layer);
+    return 0;
+}
+
+// mapw(地圖)、maph(地圖)：地圖幾格寬、幾格高
+static int l_mapw(lua_State *L) { lua_pushinteger(L, map_w((int)luaL_checkinteger(L, 1))); return 1; }
+static int l_maph(lua_State *L) { lua_pushinteger(L, map_h((int)luaL_checkinteger(L, 1))); return 1; }
+
 static const luaL_Reg api[] = {
     { "cls",   l_cls   },
     { "pset",  l_pset  },
@@ -230,6 +379,15 @@ static const luaL_Reg api[] = {
     { "newimage", l_newimage },
     { "spr",      l_spr      },
     { "sspr",     l_sspr     },
+    { "newfont",  l_newfont  },
+    { "text",     l_text     },
+    { "textw",    l_textw    },
+    { "newmap",   l_newmap   },
+    { "map",      l_map      },
+    { "mget",     l_mget     },
+    { "mset",     l_mset     },
+    { "mapw",     l_mapw     },
+    { "maph",     l_maph     },
     { NULL, NULL }
 };
 
@@ -316,6 +474,27 @@ int script_load(const char *src, size_t len, const char *name)
 
     script_call("_init");
     return failed;
+}
+
+int script_check(const char *src, size_t len, const char *name, char *err, size_t err_size)
+{
+    // 另外開一個暫時的 Lua 環境（T），和正在執行的遊戲（L）完全分開
+    lua_State *T = luaL_newstate();
+    if (T == NULL) {
+        snprintf(err, err_size, "記憶體不足，無法檢查語法");
+        return 1;
+    }
+    // luaL_loadbufferx 只把原始碼編譯成 Lua 的內部指令，不會執行任何一行。
+    // 語法錯誤（少了 end、括號沒配對……）在這一步就會被發現
+    int r = luaL_loadbufferx(T, src, len, name, "t");
+    if (r == LUA_OK) {
+        err[0] = '\0';
+    } else {
+        const char *msg = lua_tostring(T, -1);
+        snprintf(err, err_size, "%s", msg != NULL ? msg : "syntax error");
+    }
+    lua_close(T);   // 編譯結果用不到，整個環境丟掉
+    return r != LUA_OK;
 }
 
 void script_call(const char *fn)

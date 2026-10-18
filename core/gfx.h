@@ -4,6 +4,7 @@
 #ifndef GFX_H   // 防止同一個檔案被 include 兩次
 #define GFX_H
 
+#include <stddef.h>  // 提供 size_t（記憶體大小、字串長度用的整數）
 #include <stdint.h>  // 提供 uint8_t（0–255 的整數，剛好 1 byte）
 
 // 遊戲畫面大小（暫定，規格 v0.1 才凍結）
@@ -13,7 +14,7 @@
 // 最多同時載入幾張圖片
 #define MAX_IMAGES 64
 
-// 換遊戲時呼叫：調色盤回到預設、相機歸零、釋放所有圖片
+// 換遊戲時呼叫：調色盤回到預設、相機歸零、釋放所有圖片和字型
 void gfx_reset(void);
 
 // ---- 基本繪圖 ----
@@ -37,6 +38,10 @@ void gfx_pal(int index, uint8_t r, uint8_t g, uint8_t b);
 // 地圖比畫面大的時候，移動相機就是捲動畫面
 void gfx_camera(int x, int y);
 
+// 目前的相機位置（地圖模組用來算出畫面看得到哪些格子）
+int gfx_camera_x(void);
+int gfx_camera_y(void);
+
 // ---- 圖片 ----
 // 圖片的每個像素是一個顏色編號；編號 0 是「透明」，畫的時候會跳過。
 
@@ -53,9 +58,29 @@ void gfx_sspr(int img, int sx, int sy, int sw, int sh,
 // 畫圖片的第 n 格（由左到右、由上到下，從 0 開始數）
 void gfx_spr(int img, int n, int dx, int dy, int flip_x, int flip_y);
 
-// 圖片的寬、高（不存在回傳 0）
+// 圖片的寬、高、小格大小（不存在回傳 0）
 int gfx_image_w(int img);
 int gfx_image_h(int img);
+int gfx_image_tile(int img);
+
+// ---- 文字 ----
+// 字型資料的格式和 fonts/c11.bin 相同（見 tools/font/c11_convert.py）：
+// 每個字 = 字碼 4 byte（little-endian）＋ 寬度 1 byte ＋ height 列點陣（每列 2 byte，big-endian），
+// 依字碼由小到大排列。
+
+// 載入字型（複製 data），取代原本的字型。
+// 回傳 0 成功；-1 參數不對或記憶體不夠；-2 字碼沒有由小到大排列
+int gfx_font_new(int height, int count, const uint8_t *data);
+
+// 有沒有載入字型
+int gfx_font_loaded(void);
+
+// 從 (x, y) 開始畫 UTF-8 字串 s（長度 len byte），遇到 \n 換行。
+// 字型裡沒有的字畫成一個方框。回傳最寬那一行的寬度（像素）
+int gfx_text(const char *s, size_t len, int x, int y, uint8_t color);
+
+// 和 gfx_text 一樣排版，但不畫，只回傳寬度
+int gfx_text_width(const char *s, size_t len);
 
 // ---- 給平台層讀取用 ----
 

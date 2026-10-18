@@ -61,6 +61,16 @@ export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log
             return err;
         },
 
+        // 只檢查語法，不執行（正在跑的遊戲不受影響）。沒錯回傳 null，有錯回傳錯誤訊息
+        check(source) {
+            const bytes = new TextEncoder().encode(source);
+            const ptr = exports.malloc(bytes.length);
+            new Uint8Array(exports.memory.buffer).set(bytes, ptr);
+            const bad = exports.engine_check(ptr, bytes.length);
+            exports.free(ptr);
+            return bad ? readCString(exports, exports.engine_check_error()) : null;
+        },
+
         // 一位玩家這一幀的輸入：{ buttons, lx, ly, rx, ry }（格式見 input.js）
         setInput(player, s) {
             exports.input_set(player, s.buttons);

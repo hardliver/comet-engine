@@ -1,0 +1,5 @@
+{
+  "name": "文字測試",
+  "sources": ["main.lua"],
+  "output": "../../build/text_test.lua"
+}

@@ -3,7 +3,7 @@
 // 跑固定幀數後把最後一幀存成圖檔。
 // 同一串按鍵在網頁上跑，結果必須一模一樣：這就是之後的「測試向量」。
 //
-// 用法：./build/mac [遊戲檔]，沒給就用 games/move_box.lua
+// 用法：./build/mac [遊戲檔] [輸出圖檔]，沒給就用 games/move_box.lua、out.ppm
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,6 +63,7 @@ static int save_ppm(const char *path)
 int main(int argc, char **argv)
 {
     const char *path = argc > 1 ? argv[1] : "games/move_box.lua";
+    const char *out = argc > 2 ? argv[2] : "out.ppm";
 
     size_t len = 0;
     char *src = read_file(path, &len);
@@ -99,9 +100,9 @@ int main(int argc, char **argv)
         engine_frame();
     }
 
-    if (save_ppm("out.ppm") != 0) {
+    if (save_ppm(out) != 0) {
         return 1;
     }
-    printf("%s：跑了 %u 幀，已存成 out.ppm\n", path, engine_frame_count());
+    printf("%s：跑了 %u 幀，已存成 %s\n", path, engine_frame_count(), out);
     return 0;
 }

@@ -1,0 +1,12 @@
+{
+  "name": "地圖測試",
+  "sources": ["main.lua"],
+  "images": {
+    "town": "town.png",
+    "dungeon": "dungeon.png"
+  },
+  "maps": {
+    "test": "maps/test.json"
+  },
+  "output": "../../build/map_test.lua"
+}
