@@ -399,8 +399,9 @@ function run() {
 // 狀態列：目前第幾幀
 setInterval(() => {
     const paused = loop.isPaused();
-    $("frame-count").textContent = `${paused ? "⏸ " : ""}第 ${engine.frameCount()} 幀`;
-    $("frame-count").className = paused ? "" : "playing";
+    const speed = loop.speed();
+    $("frame-count").textContent = `${paused ? "⏸ " : ""}${speed > 1 ? `⏩ ×${speed}　` : ""}第 ${engine.frameCount()} 幀`;
+    $("frame-count").className = paused ? "" : (speed > 1 ? "playing fast" : "playing");
 }, 200);
 
 // 點遊戲畫面 → 鍵盤控制遊戲；點程式碼 → 鍵盤打字
@@ -814,6 +815,27 @@ $("btn-pause").addEventListener("click", () => {
     $("btn-step").disabled = !p;
 });
 $("btn-step").addEventListener("click", () => loop.step());
+
+// ---- 加速（開發用）----
+// ×1／×2／×4：每 1/60 秒跑幾幀（comet.js 的 setSpeed）。
+// 在遊戲畫面上按住 `（數字 1 左邊那個鍵）：放開之前暫時 ×4，放開就回到選好的速度。
+// 只有 Studio 有，遊玩頁和網頁版 Nova 沒有，所以不會影響玩家
+let chosenSpeed = 1;
+let turbo = false;
+function applySpeed() {
+    loop.setSpeed(turbo ? 4 : chosenSpeed);
+    for (const b of $("speed").children) b.classList.toggle("on", Number(b.dataset.speed) === chosenSpeed);
+}
+for (const b of $("speed").children) {
+    b.addEventListener("click", () => { chosenSpeed = Number(b.dataset.speed); applySpeed(); canvas.focus(); });
+}
+canvas.addEventListener("keydown", (e) => {
+    if (e.code === "Backquote" && !turbo) { turbo = true; applySpeed(); }
+});
+canvas.addEventListener("keyup", (e) => {
+    if (e.code === "Backquote") { turbo = false; applySpeed(); }
+});
+canvas.addEventListener("blur", () => { if (turbo) { turbo = false; applySpeed(); } });   // 按著時點到別的地方
 
 $("template").addEventListener("change", async (e) => {
     const url = e.target.value;

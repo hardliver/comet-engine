@@ -36,6 +36,13 @@
   }
   header h1 { font-size: 15px; margin: 0 8px 0 0; color: #fff; font-weight: 600; }
   header .spacer { flex: 1; }
+  .speed { display: inline-flex; }
+  .speed button { border-radius: 0; padding-left: 8px; padding-right: 8px; }
+  .speed button:first-child { border-radius: 6px 0 0 6px; }
+  .speed button:last-child { border-radius: 0 6px 6px 0; }
+  .speed button + button { margin-left: -1px; }
+  .speed button.on { background: var(--accent); border-color: var(--accent); color: #111; }
+  #frame-count.fast { font-weight: 600; }   /* 加速中：粗體，提醒自己開著加速 */
   button, select {
     font: inherit;
     padding: 5px 10px;
@@ -217,6 +224,9 @@
   <button id="btn-ai" title="把說明文件和目前的程式碼一起複製，貼給 ChatGPT、Claude 等 AI">複製給 AI</button>
   <span class="spacer"></span>
   <label class="toggle"><input type="checkbox" id="auto-run" checked> 修改後自動重新執行</label>
+  <span class="speed" id="speed" title="加速遊戲（開發用）：每 1/60 秒跑 2 或 4 幀。在遊戲畫面上按住 ` 鍵暫時 ×4">
+    <button data-speed="1" class="on">×1</button><button data-speed="2">×2</button><button data-speed="4">×4</button>
+  </span>
   <button id="btn-pause">暫停</button>
   <button id="btn-step" disabled>下一幀</button>
   <button id="btn-run" class="primary" title="Ctrl + Enter（Mac：⌘ + Enter）">▶ 重新執行</button>
@@ -235,7 +245,7 @@
     <div class="screen-wrap">
       <canvas id="screen" width="320" height="240" tabindex="0"></canvas>
       <div class="status">
-        <span id="focus-hint">點一下畫面就能用鍵盤玩：WASD 移動、K = A、L = B、J = X、I = Y、Q／E = L／R、方向鍵 = 右搖桿、Enter = Start、Tab = Select</span>
+        <span id="focus-hint">點一下畫面就能用鍵盤玩：WASD 移動、K = A、L = B、J = X、I = Y、Q／E = L／R、方向鍵 = 右搖桿、Enter = Start、Tab = Select、按住 ` 加速</span>
         <span id="frame-count"></span>
       </div>
     </div>

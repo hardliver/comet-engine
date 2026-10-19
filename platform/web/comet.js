@@ -254,6 +254,9 @@ export function startLoop(engine, canvas, getInput, { afterFrame = null } = {}) 
     let acc = 0;
     let paused = false;
     let running = true;
+    // 速度（開發用，Studio 的「×2」「×4」）：每 1/60 秒跑 speed 幀，畫面只顯示最後一幀。
+    // 遊戲收到的還是一幀一幀同樣的輸入，所以結果和原速完全相同，只是比較快跑完
+    let speed = 1;
 
     function tick(now) {
         if (!running) return;
@@ -264,7 +267,7 @@ export function startLoop(engine, canvas, getInput, { afterFrame = null } = {}) 
         if (acc > 250) acc = 250;
 
         while (acc >= FRAME_MS) {
-            if (!paused) {
+            for (let k = 0; k < speed && !paused; k++) {
                 for (let p = 0; p < 4; p++) engine.setInput(p, getInput(p));
                 engine.frame();
                 if (afterFrame) afterFrame();
@@ -279,6 +282,8 @@ export function startLoop(engine, canvas, getInput, { afterFrame = null } = {}) 
     return {
         stop() { running = false; },
         setPaused(p) { paused = p; },
+        setSpeed(n) { speed = Math.max(1, Math.floor(n)); },
+        speed() { return speed; },
         isPaused() { return paused; },
         // 暫停時一次只跑一幀（除錯用）
         step() {
