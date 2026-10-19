@@ -1,0 +1,7 @@
+{
+  "name": "comet",
+  "private": true,
+  "description": "讓 Node.js 把 .js 檔當成 ES module（import／export）。合併工具 tools/cart.mjs 會 import platform/web/ 的 .js",
+  "type": "module",
+  "engines": { "node": ">=18" }
+}
