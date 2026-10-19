@@ -12,7 +12,7 @@ import {
 } from "./vendor/codemirror.js";
 import { createEngine, startLoop } from "./comet.js";
 import { setupKeyboard, readGamepad, merge } from "./input.js";
-import { buildCart, buildImages, buildMaps, imageEntries, imageFiles, mapFiles, mapLine, browserInflate } from "./cart.js";
+import { buildCart, buildImages, buildMaps, imageEntries, imageFiles, mapFiles, mapLine, browserInflate, fontTextFiles, fontTextCode } from "./cart.js";
 import { createImageViewer } from "./imageview.js";
 import { createMapEditor, newMapText } from "./mapedit.js";
 import { buildFont, fontSummary } from "./font.js";
@@ -369,8 +369,8 @@ function currentCart() {
     const texts = {};
     for (const [path, f] of folder.files) texts[path] = f.text;
     if (folder.mapsError) throw new Error(folder.mapsError);   // 地圖檔格式有錯：顯示原因，不執行
-    // 字型也要掃描地圖物件裡的字（例如告示牌的內容）
-    const fontCode = fontFor({ ...texts, "(maps)": folder.mapsCode });
+    // 字型也要掃描地圖物件裡的字（例如告示牌的內容），以及 comet.json 的 fontText 列的檔案
+    const fontCode = fontFor({ ...texts, "(maps)": folder.mapsCode, "(fontText)": folder.fontText });
     const { code, segments } = buildCart(folder.project, texts, folder.imagesCode, fontCode, folder.mapsCode);
     folder.segments = segments;
     folder.cart = code;
@@ -554,8 +554,18 @@ async function openFolder(dir) {
         }
     }
 
+    // fontText：只在打開資料夾時讀一次（改了要重新打開資料夾）
+    const fontTexts = [];
+    for (const path of fontTextFiles(project)) {
+        try {
+            fontTexts.push((await readText(dir, path)).text);
+        } catch (e) {
+            toast(`找不到 ${path}（comet.json 的 fontText）`, 5000);
+        }
+    }
+
     folder = { dir, project, projectMod, files, images, imagesCode: "", maps, mapsCode: "", mapsError: null,
-               current: null, segments: [] };
+               fontText: fontTextCode(fontTexts), current: null, segments: [] };
     await rebuildImages();
     await rebuildMaps();
     document.body.classList.add("folder-mode");

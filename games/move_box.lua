@@ -1,4 +1,5 @@
 -- move_box.lua：移動方塊（測試所有輸入用）
+-- id: comet/move-box
 --
 -- 引擎會呼叫這三個函式：
 --   _init()    開始時一次

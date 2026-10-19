@@ -89,6 +89,29 @@ export async function buildImages(project, readBytes, inflate) {
 }
 
 // ============================================================
+// 字型要額外收錄的字
+// ============================================================
+// comet.json：  "fontText": ["web/games.json"]
+//
+// 字型只收原始碼字串裡出現過的字。但有些字是執行時才拿到的，
+// 例如 Nova 主選單顯示的遊戲名稱（來自平台的遊戲清單）。
+// 把這些文字所在的檔案列在 fontText，裡面的字就會一起放進字型。
+
+export function fontTextFiles(project) {
+    return project.fontText || [];
+}
+
+// 把幾段文字包成 Lua 的長字串（掃描字型時當成「字串」），回傳一段假的原始碼
+export function fontTextCode(texts) {
+    return texts.map((t) => {
+        let level = 0;
+        while (t.includes("]" + "=".repeat(level) + "]")) level++;   // 選一個不會提早結束的 [==[
+        const eq = "=".repeat(level);
+        return `return [${eq}[${t}]${eq}]`;
+    }).join("\n");
+}
+
+// ============================================================
 // 地圖
 // ============================================================
 // comet.json：  "maps": { "camp": "maps/camp.json" }

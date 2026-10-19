@@ -246,7 +246,8 @@ export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log
 // 所以不能「被叫一次就跑一幀」，而是累積經過的時間，每滿 1/60 秒才跑一幀。
 //
 // getInput(player) 回傳那位玩家這一幀的輸入狀態（格式見 input.js）。
-export function startLoop(engine, canvas, getInput) {
+// afterFrame()：每跑完一幀呼叫一次（網頁版 Nova 用來處理「啟動遊戲／回 HOME」的請求）
+export function startLoop(engine, canvas, getInput, { afterFrame = null } = {}) {
     const ctx = canvas.getContext("2d");
     const image = ctx.createImageData(SCREEN_W, SCREEN_H);
     let last = performance.now();
@@ -266,6 +267,7 @@ export function startLoop(engine, canvas, getInput) {
             if (!paused) {
                 for (let p = 0; p < 4; p++) engine.setInput(p, getInput(p));
                 engine.frame();
+                if (afterFrame) afterFrame();
             }
             acc -= FRAME_MS;
         }

@@ -1,5 +1,6 @@
 -- catch.lua：接住掉落的方塊（docs/AI_GUIDE.md 裡的範例）
 -- 左右移動接方塊；漏接 5 個就結束，按 A 重來
+-- id: comet/catch
 
 local LEFT, RIGHT, A = 0, 1, 4
 

@@ -9,7 +9,7 @@
 import fs from "fs";
 import path from "path";
 import zlib from "zlib";
-import { buildCart, buildImages, buildMaps } from "../platform/web/cart.js";
+import { buildCart, buildImages, buildMaps, fontTextFiles, fontTextCode } from "../platform/web/cart.js";
 import { buildFont, fontSummary } from "../platform/web/font.js";
 
 // 字型檔放在 comet 資料夾裡（不在遊戲的資料夾），所以用這支程式自己的位置找
@@ -31,8 +31,9 @@ const imagesCode = await buildImages(
 
 const mapsCode = await buildMaps(project, async (p) => fs.readFileSync(path.join(dir, p), "utf8"));
 
-// 字型也要掃描地圖物件裡的字（例如告示牌的內容）
-const font = buildFont({ ...files, "(maps)": mapsCode }, new Uint8Array(fs.readFileSync(FONT)));
+// 字型也要掃描地圖物件裡的字（例如告示牌的內容），以及 comet.json 的 fontText 列的檔案
+const fontText = fontTextCode(fontTextFiles(project).map((p) => fs.readFileSync(path.join(dir, p), "utf8")));
+const font = buildFont({ ...files, "(maps)": mapsCode, "(fontText)": fontText }, new Uint8Array(fs.readFileSync(FONT)));
 const { code, segments } = buildCart(project, files, imagesCode, font.code, mapsCode);
 const out = path.join(dir, project.output || "build/game.lua");
 fs.mkdirSync(path.dirname(out), { recursive: true });
