@@ -396,6 +396,7 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
     for (const [id, file] of Object.entries(files)) {
         const a = cstr(engine, id), b = cstr(engine, file);
         engine.system_add_game(a, b);
+        engine.system_set_info(a, a, Object.keys(files).indexOf(id) + 1);   // 和 Mac 版一樣
         engine.free(a); engine.free(b);
     }
     loadWith(engine, "engine_load_system", sysSrc);
@@ -425,7 +426,7 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
     if (events.join(",") !== want) problems.push(`切換順序：${events.join(",")}（應該是 ${want}）`);
     const ppm = fs.readFileSync("build/system.ppm");
     if (Buffer.compare(framebufferRGB(engine), ppm.subarray(ppm.length - W * H * 3)) !== 0) problems.push("最後的畫面和 Mac 版不同");
-    if (px(engine, 6, 232) !== GREEN || px(engine, 14, 232) !== GREEN) problems.push("系統卡匣的檢查方塊不是綠色");
+    if ([6, 14, 22].some((x) => px(engine, x, 232) !== GREEN)) problems.push("系統卡匣的檢查方塊不是綠色");
     if (px(engine, 25, 85) !== GREEN) problems.push("回 HOME 後，系統卡匣不知道剛剛玩的是 test/b");
 
     // 沒載入系統卡匣：Start＋Select 照常交給遊戲

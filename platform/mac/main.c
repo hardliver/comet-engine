@@ -291,8 +291,10 @@ static int run_system(const char *sys_path, const char *out,
         return 1;
     }
     for (int g = 0; g < ngames; g++) {
-        // 名稱用檔名代替（真正的網頁版 Nova 會從 comet.json 的 name 來）
+        // 名稱用檔名代替（真正的網頁版 Nova 會從 comet.json 的 name 來）；
+        // 介紹、人數也沒有來源：介紹用 id、人數用排第幾（make check 會檢查這兩項有傳到 Lua）
         system_add_game(ids[g], paths[g]);
+        system_set_info(ids[g], ids[g], g + 1);
     }
 
     engine_init();

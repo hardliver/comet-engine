@@ -23,6 +23,7 @@
 #define SYSTEM_MAX_GAMES 64
 #define SYSTEM_ID_MAX    63
 #define SYSTEM_NAME_MAX  63
+#define SYSTEM_DESC_MAX  95      // 一句話介紹（UTF-8，中文約 30 字）
 #define SYSTEM_HOME_HOLD 30      // Start＋Select 要按住幾幀（30 幀 = 0.5 秒）
 
 // 平台要做的事
@@ -39,6 +40,8 @@ struct lua_State;
 // 遊戲清單：系統卡匣用 sys.games() 看到的就是這份。名稱是 UTF-8
 void system_clear_games(void);
 int system_add_game(const char *id, const char *name);   // 成功回傳 0；滿了或 id 太長回傳 1
+// 補上大廳要顯示的資訊（可以不呼叫）：一句話介紹、幾人遊玩（0 = 沒寫）。找不到 id 回傳 1
+int system_set_info(const char *id, const char *desc, int players);
 
 // 每一幀之後問一次：要做什麼？
 int system_request(void);

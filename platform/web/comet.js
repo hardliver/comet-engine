@@ -180,9 +180,15 @@ export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log
         },
         // 遊戲清單（系統卡匣用 sys.games() 看到的）
         clearGames() { exports.system_clear_games(); },
-        addGame(id, name) {
+        // info（可省略）：{ desc: 一句話介紹, players: 幾人遊玩 }，大廳顯示用
+        addGame(id, name, info = {}) {
             const a = writeCString(exports, id), b = writeCString(exports, name);
-            const err = exports.system_add_game(a, b);
+            let err = exports.system_add_game(a, b);
+            if (err === 0 && (info.desc || info.players)) {
+                const c = writeCString(exports, info.desc || "");
+                exports.system_set_info(a, c, info.players | 0);
+                exports.free(c);
+            }
             exports.free(a);
             exports.free(b);
             return err;

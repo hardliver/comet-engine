@@ -13,6 +13,8 @@
 typedef struct {
     char id[SYSTEM_ID_MAX + 1];
     char name[SYSTEM_NAME_MAX + 1];
+    char desc[SYSTEM_DESC_MAX + 1];
+    int players;
 } GameEntry;
 
 static GameEntry games[SYSTEM_MAX_GAMES];
@@ -35,20 +37,40 @@ void system_clear_games(void)
     game_count = 0;
 }
 
+// 把 src 複製到 dst（最多 max 個 byte）。太長就截斷；截在 UTF-8 字的中間會變成亂碼，
+// 所以往前退到完整的字為止
+static void copy_utf8(char *dst, const char *src, size_t max)
+{
+    size_t n = strlen(src);
+    if (n > max) {
+        n = max;
+        while (n > 0 && ((unsigned char)src[n] & 0xC0) == 0x80) n--;   // 10xxxxxx = 字的中間
+    }
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
 int system_add_game(const char *id, const char *name)
 {
     if (game_count >= SYSTEM_MAX_GAMES || strlen(id) > SYSTEM_ID_MAX) return 1;
     GameEntry *g = &games[game_count++];
     strcpy(g->id, id);
-    // 名稱太長就截斷；截在 UTF-8 字的中間會變成亂碼，所以往前退到完整的字為止
-    size_t n = strlen(name);
-    if (n > SYSTEM_NAME_MAX) {
-        n = SYSTEM_NAME_MAX;
-        while (n > 0 && ((unsigned char)name[n] & 0xC0) == 0x80) n--;   // 10xxxxxx = 字的中間
-    }
-    memcpy(g->name, name, n);
-    g->name[n] = '\0';
+    copy_utf8(g->name, name, SYSTEM_NAME_MAX);
+    g->desc[0] = '\0';
+    g->players = 0;
     return 0;
+}
+
+int system_set_info(const char *id, const char *desc, int players)
+{
+    for (int i = 0; i < game_count; i++) {
+        if (strcmp(games[i].id, id) == 0) {
+            copy_utf8(games[i].desc, desc ? desc : "", SYSTEM_DESC_MAX);
+            games[i].players = players < 0 ? 0 : players;
+            return 0;
+        }
+    }
+    return 1;
 }
 
 int system_request(void) { return request; }
@@ -93,16 +115,21 @@ void system_before_frame(void)
 // Lua：sys 表格（只有系統卡匣有）
 // ============================================================
 
-// sys.games()：{ { id = "hardliver/wildkin", name = "Wildkin 野伴" }, ... }
+// sys.games()：{ { id = "hardliver/wildkin", name = "Wildkin 野伴", desc = "……", players = 1 }, ... }
+// desc 沒寫是 ""，players 沒寫是 0
 static int l_games(lua_State *L)
 {
     lua_createtable(L, game_count, 0);
     for (int i = 0; i < game_count; i++) {
-        lua_createtable(L, 0, 2);
+        lua_createtable(L, 0, 4);
         lua_pushstring(L, games[i].id);
         lua_setfield(L, -2, "id");
         lua_pushstring(L, games[i].name);
         lua_setfield(L, -2, "name");
+        lua_pushstring(L, games[i].desc);
+        lua_setfield(L, -2, "desc");
+        lua_pushinteger(L, games[i].players);
+        lua_setfield(L, -2, "players");
         lua_rawseti(L, -2, i + 1);
     }
     return 1;

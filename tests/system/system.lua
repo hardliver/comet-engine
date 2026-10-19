@@ -18,6 +18,8 @@ function _init()
     end
     checks[1] = #list == 2 and list[1].id == "test/a" and list[2].id == "test/b"
     checks[2] = sys.launch("沒有這款") == false
+    -- 平台用 system_set_info 補的資訊（Mac 版和測試：介紹 = id，人數 = 排第幾）
+    checks[3] = list[1].desc == "test/a" and list[1].players == 1 and list[2].players == 2
 end
 
 function _update()
