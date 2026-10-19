@@ -227,13 +227,90 @@ export async function buildMaps(project, readText) {
     return lines.join("\n");
 }
 
+// ============================================================
+// 資料檔（JSON → Lua 表格）
+// ============================================================
+// comet.json：  "data": { "species": "data/species.json", "moves": "data/moves.json" }
+//
+// 野伴、招式、配方這些「數字很多、要一直調整」的東西，放在 JSON 檔比寫在 Lua 程式裡好改，
+// 之後 Studio 的資料表編輯器（06 清單第 22 項）也是編輯這些檔案。
+// 合併時把 JSON 轉成 Lua 表格，遊戲裡用 DATA.species、DATA.moves 取得：
+//   JSON 物件 { "hp": 40 }  → Lua { hp = 40 }
+//   JSON 陣列 [1, 2, 3]     → Lua { 1, 2, 3 }（從 1 開始數，和一般 Lua 陣列一樣）
+//   文字、整數、true／false 照搬
+// 小數和 null 不允許（Comet 規定只用整數；null 在 Lua 表格裡等於「沒有這一項」，容易誤會），
+// 出錯時指出哪個檔案、哪個位置，例如「data/species.json 的 [3].hp」
+
+export function dataEntries(project) {
+    return Object.entries(project.data || {}).map(([name, file]) => ({ name, file }));
+}
+
+export function dataFiles(project) {
+    return dataEntries(project).map((e) => e.file);
+}
+
+// Lua 的名稱規則（英文、數字、底線，不能數字開頭），而且不是 Lua 的保留字，才能寫成 key = 的形式
+const LUA_KEYWORDS = new Set(("and break do else elseif end false for function goto if in local nil not or " +
+    "repeat return then true until while").split(" "));
+function luaKey(k) {
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && !LUA_KEYWORDS.has(k) ? k : `[${luaString(k)}]`;
+}
+
+// 一個 JSON 值 → Lua 程式碼。where：目前的位置（錯誤訊息用）；indent：縮排
+function luaValue(v, where, indent) {
+    if (typeof v === "string") return luaString(v);
+    if (typeof v === "boolean") return String(v);
+    if (typeof v === "number") {
+        if (!Number.isInteger(v)) throw new Error(`${where} 是小數（${v}）：Comet 只用整數，例如把 1.5 倍寫成 15（之後再 // 10）`);
+        return String(v);
+    }
+    if (v === null) throw new Error(`${where} 是 null：不需要的欄位直接省略`);
+    const inner = indent + "  ";
+    if (Array.isArray(v)) {
+        if (v.length === 0) return "{}";
+        const items = v.map((x, i) => luaValue(x, `${where}[${i}]`, inner));
+        // 短的陣列寫在同一行，例如 { 1, 2, 3 }；長的或裡面有表格的，一項一行
+        const oneLine = `{ ${items.join(", ")} }`;
+        if (oneLine.length <= 80 && !oneLine.includes("\n")) return oneLine;
+        return `{\n${items.map((x) => inner + x).join(",\n")}\n${indent}}`;
+    }
+    const sep = where.endsWith(" ") ? "" : ".";   // 最外層：「x.json 的 hp」；裡面：「x.json 的 [0].hp」
+    const pairs = Object.entries(v).map(([k, x]) => `${luaKey(k)} = ${luaValue(x, `${where}${sep}${k}`, inner)}`);
+    if (pairs.length === 0) return "{}";
+    const oneLine = `{ ${pairs.join(", ")} }`;
+    if (oneLine.length <= 100 && !oneLine.includes("\n")) return oneLine;
+    return `{\n${pairs.map((x) => inner + x).join(",\n")}\n${indent}}`;
+}
+
+// 把 comet.json 的 data 轉成一段 Lua 程式碼。readText(path)：讀檔，回傳文字
+export async function buildData(project, readText) {
+    const entries = dataEntries(project);
+    if (entries.length === 0) return "";
+    const lines = [
+        "-- ==================== 資料檔（comet.json 的 data，自動產生） ====================",
+        "DATA = {}",
+    ];
+    for (const e of entries) {
+        if (!luaKey(e.name).match(/^[A-Za-z_]/)) throw new Error(`comet.json 的 data 名稱「${e.name}」只能用英文、數字、底線`);
+        let json;
+        try {
+            json = JSON.parse(await readText(e.file));
+        } catch (err) {
+            throw new Error(`資料檔 ${e.file} 讀取失敗：${err.message}`);
+        }
+        lines.push(`DATA.${e.name} = ${luaValue(json, e.file + " 的 ", "")}`);
+    }
+    return lines.join("\n");
+}
+
 // project：comet.json 的內容
 // files：{ "src/main.lua": "原始碼文字", ... }
 // imagesCode：buildImages() 產生的程式碼（沒有圖片就是空字串）
 // fontCode：buildFont() 產生的程式碼（沒用到 text() 就是空字串）
 // mapsCode：buildMaps() 產生的程式碼（沒有地圖就是空字串）
+// dataCode：buildData() 產生的程式碼（沒有資料檔就是空字串）
 // 回傳 { code: 合併後的遊戲檔, segments: 每個來源檔在遊戲檔裡的行號範圍 }
-export function buildCart(project, files, imagesCode = "", fontCode = "", mapsCode = "") {
+export function buildCart(project, files, imagesCode = "", fontCode = "", mapsCode = "", dataCode = "") {
     const lines = [
         `-- ${project.name || "Comet game"}`,
         ...(project.id ? [`-- id: ${project.id}`] : []),
@@ -242,6 +319,7 @@ export function buildCart(project, files, imagesCode = "", fontCode = "", mapsCo
     if (fontCode) lines.push("", ...fontCode.split("\n"));
     if (imagesCode) lines.push("", ...imagesCode.split("\n"));
     if (mapsCode) lines.push("", ...mapsCode.split("\n"));
+    if (dataCode) lines.push("", ...dataCode.split("\n"));
     const segments = [];
 
     for (const path of project.sources) {

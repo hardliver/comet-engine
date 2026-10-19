@@ -22,9 +22,12 @@
 // 測試 11：資源包（tests/pak）。檢查方塊全綠；網頁版和 Mac 版的 build/pak_test.ppm 逐像素相同；
 //          畫面上的點對（被背景擋住、沒被擋住、放大、翻轉、染色）；
 //          遊戲指紋 = SHA-256(遊戲檔指紋 + 資源包內容指紋)
+// 測試 12：資料檔（tests/data）。comet.json 的 data 合併成 DATA 表格：檢查方塊全綠、
+//          和 Mac 版的 build/data_test.ppm 逐像素相同；小數、null、壞掉的 JSON 會清楚地報錯
 
 import fs from "fs";
 import crypto from "crypto";
+import { buildData } from "../platform/web/cart.js";
 
 const WASM = "build/web/comet.wasm";
 const W = 320, H = 240;
@@ -482,6 +485,41 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
         const expect = crypto.createHash("sha256").update(inner).update(pak.subarray(12, 44)).digest();
         const got = Buffer.from(new Uint8Array(engine.memory.buffer, engine.engine_cart_sha(), 32));
         if (Buffer.compare(expect, got) !== 0) problems.push("遊戲指紋沒有包含資源包");
+    } catch (e) {
+        problems.push(String(e));
+    }
+    if (problems.length === 0) ok(name);
+    else fail(name, problems.join("；"));
+}
+
+// ---- 測試 12 ----
+{
+    const name = "資料檔：JSON 合併成 DATA 表格，網頁版與 Mac 版相同，錯誤訊息清楚";
+    const problems = [];
+    try {
+        const engine = await loadEngine();
+        load(engine, fs.readFileSync("build/data_test.lua", "utf8"));
+        for (let i = 0; i < 90; i++) engine.engine_frame();
+        const rgb = framebufferRGB(engine);
+        const ppm = fs.readFileSync("build/data_test.ppm");
+        if (Buffer.compare(rgb, ppm.subarray(ppm.length - W * H * 3)) !== 0) problems.push("畫面和 Mac 版不同");
+        for (let i = 0; i < 7; i++) {
+            const p = ((232 * W) + 6 + i * 8) * 3;
+            if ([rgb[p], rgb[p + 1], rgb[p + 2]].join(",") !== "0,228,54") problems.push(`第 ${i + 1} 個檢查方塊不是綠色`);
+        }
+        // 錯誤訊息：要指出哪個檔案、哪個位置
+        const bad = async (text) => {
+            try {
+                await buildData({ data: { x: "x.json" } }, async () => text);
+                return "沒有報錯";
+            } catch (e) { return e.message; }
+        };
+        const m1 = await bad('[{ "hp": 1.5 }]');
+        if (!m1.includes("x.json") || !m1.includes("[0].hp") || !m1.includes("小數")) problems.push(`小數的錯誤訊息：${m1}`);
+        const m2 = await bad('{ "a": null }');
+        if (!m2.includes("的 a 是 null")) problems.push(`null 的錯誤訊息：${m2}`);
+        const m3 = await bad('{ "a": 1, }');
+        if (!m3.includes("x.json")) problems.push(`壞掉的 JSON 的錯誤訊息：${m3}`);
     } catch (e) {
         problems.push(String(e));
     }

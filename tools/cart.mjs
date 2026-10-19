@@ -9,7 +9,7 @@
 import fs from "fs";
 import path from "path";
 import zlib from "zlib";
-import { buildCart, buildImages, buildMaps, fontTextFiles, fontTextCode } from "../platform/web/cart.js";
+import { buildCart, buildImages, buildMaps, buildData, fontTextFiles, fontTextCode } from "../platform/web/cart.js";
 import { buildFont, fontSummary } from "../platform/web/font.js";
 
 // 字型檔放在 comet 資料夾裡（不在遊戲的資料夾），所以用這支程式自己的位置找
@@ -30,15 +30,18 @@ const imagesCode = await buildImages(
 );
 
 const mapsCode = await buildMaps(project, async (p) => fs.readFileSync(path.join(dir, p), "utf8"));
+const dataCode = await buildData(project, async (p) => fs.readFileSync(path.join(dir, p), "utf8"));
 
-// 字型也要掃描地圖物件裡的字（例如告示牌的內容），以及 comet.json 的 fontText 列的檔案
+// 字型也要掃描地圖物件裡的字（例如告示牌的內容）、資料檔裡的字（野伴名稱、招式說明），
+// 以及 comet.json 的 fontText 列的檔案
 const fontText = fontTextCode(fontTextFiles(project).map((p) => fs.readFileSync(path.join(dir, p), "utf8")));
-const font = buildFont({ ...files, "(maps)": mapsCode, "(fontText)": fontText }, new Uint8Array(fs.readFileSync(FONT)));
-const { code, segments } = buildCart(project, files, imagesCode, font.code, mapsCode);
+const font = buildFont({ ...files, "(maps)": mapsCode, "(data)": dataCode, "(fontText)": fontText }, new Uint8Array(fs.readFileSync(FONT)));
+const { code, segments } = buildCart(project, files, imagesCode, font.code, mapsCode, dataCode);
 const out = path.join(dir, project.output || "build/game.lua");
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, code);
 const images = Object.keys(project.images || {}).length;
 const maps = Object.keys(project.maps || {}).length;
-console.log(`已產生 ${path.relative(process.cwd(), out)}（${segments.length} 個原始碼檔、${images} 張圖片、${maps} 張地圖，${(code.length / 1024).toFixed(0)} KB）`);
+const data = Object.keys(project.data || {}).length;
+console.log(`已產生 ${path.relative(process.cwd(), out)}（${segments.length} 個原始碼檔、${images} 張圖片、${maps} 張地圖、${data} 個資料檔，${(code.length / 1024).toFixed(0)} KB）`);
 if (font.stats) console.log(fontSummary(font.stats));

@@ -263,6 +263,26 @@ end
 - `pakhas(名稱)`：有沒有這一項；`pakdata(名稱)`：一段資料（文字）當成字串
 - 有資源包的遊戲，`images` 的圖片只能用 16–127 號顏色（128–255 給背景）
 
+### 資料檔
+
+數字很多、要常常調整的資料（角色、招式、道具），放在 JSON 檔，在 `comet.json` 的 `data` 列出來：
+
+```json
+"data": { "species": "data/species.json", "moves": "data/moves.json" }
+```
+
+合併時會轉成 Lua 表格，遊戲裡用 `DATA.species`、`DATA.moves` 取得：
+
+```lua
+-- data/species.json：[ { "name": "芽角羊", "hp": 45, "moves": ["撞擊", "藤鞭"] }, ... ]
+local first = DATA.species[1]          -- JSON 陣列變成 Lua 陣列，從 1 開始數
+text(first.name, 10, 10)               -- 資料檔裡的字會自動收進字型
+local hp = first.hp
+```
+
+- 只能有整數、文字、true／false、陣列、物件。**不能有小數**（1.5 倍寫成 15，用的時候再 `// 10`），也不能有 null（不需要的欄位直接省略）
+- 資料表是一般的 Lua 表格，可以讀；不要在遊戲中修改它（要記錄變化，另外存在自己的變數裡）
+
 ### 存檔
 
 ```lua

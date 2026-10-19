@@ -12,7 +12,7 @@ import {
 } from "./vendor/codemirror.js";
 import { createEngine, startLoop } from "./comet.js";
 import { setupKeyboard, readGamepad, merge } from "./input.js";
-import { buildCart, buildImages, buildMaps, imageEntries, imageFiles, mapFiles, mapLine, browserInflate, fontTextFiles, fontTextCode } from "./cart.js";
+import { buildCart, buildImages, buildMaps, buildData, dataFiles, imageEntries, imageFiles, mapFiles, mapLine, browserInflate, fontTextFiles, fontTextCode } from "./cart.js";
 import { createImageViewer } from "./imageview.js";
 import { createMapEditor, newMapText } from "./mapedit.js";
 import { buildFont, fontSummary } from "./font.js";
@@ -369,9 +369,10 @@ function currentCart() {
     const texts = {};
     for (const [path, f] of folder.files) texts[path] = f.text;
     if (folder.mapsError) throw new Error(folder.mapsError);   // 地圖檔格式有錯：顯示原因，不執行
+    if (folder.dataError) throw new Error(folder.dataError);   // 資料檔有錯（JSON 格式、小數……）：同上
     // 字型也要掃描地圖物件裡的字（例如告示牌的內容），以及 comet.json 的 fontText 列的檔案
-    const fontCode = fontFor({ ...texts, "(maps)": folder.mapsCode, "(fontText)": folder.fontText });
-    const { code, segments } = buildCart(folder.project, texts, folder.imagesCode, fontCode, folder.mapsCode);
+    const fontCode = fontFor({ ...texts, "(maps)": folder.mapsCode, "(data)": folder.dataCode, "(fontText)": folder.fontText });
+    const { code, segments } = buildCart(folder.project, texts, folder.imagesCode, fontCode, folder.mapsCode, folder.dataCode);
     folder.segments = segments;
     folder.cart = code;
     return code;
@@ -424,6 +425,8 @@ refreshImageViewer();   // 要在 folder 宣告之後才能呼叫（let 在宣�
 //   imagesCode: 圖片轉成的 Lua 程式碼（圖片有變才重新轉換）
 //   maps:       Map(路徑 → { text, lastModified })：comet.json 裡 maps 的 JSON
 //   mapsCode:   地圖轉成的 Lua 程式碼；mapsError：地圖檔有錯時的訊息
+//   data:       Map(路徑 → { text, lastModified })：comet.json 裡 data 的 JSON
+//   dataCode:   資料檔轉成的 Lua 程式碼；dataError：資料檔有錯時的訊息
 //   current:    目前編輯的檔案路徑
 //   segments:   合併後每個檔案在遊戲檔裡的行號範圍
 // }
@@ -483,6 +486,21 @@ async function rebuildImages() {
     }
     refreshImageViewer();
     if (isMapOpen()) openFile(folder.current);
+}
+
+// 把 comet.json 的 data 轉成 Lua 程式碼。有錯時記下原因，執行時顯示
+async function rebuildData() {
+    try {
+        folder.dataCode = await buildData(folder.project, async (p) => {
+            const d = folder.data.get(p);
+            if (!d) throw new Error(`找不到資料檔 ${p}`);
+            return d.text;
+        });
+        folder.dataError = null;
+    } catch (e) {
+        folder.dataCode = "";
+        folder.dataError = e.message;
+    }
 }
 
 // 把 comet.json 的 maps 轉成 Lua 程式碼。格式有錯時記下原因，執行時顯示
@@ -578,6 +596,15 @@ async function openFolder(dir) {
         }
     }
 
+    const data = new Map();
+    for (const path of dataFiles(project)) {
+        try {
+            data.set(path, await readText(dir, path));
+        } catch (e) {
+            toast(`找不到資料檔 ${path}`, 5000);
+        }
+    }
+
     // fontText：只在打開資料夾時讀一次（改了要重新打開資料夾）
     const fontTexts = [];
     for (const path of fontTextFiles(project)) {
@@ -589,9 +616,11 @@ async function openFolder(dir) {
     }
 
     folder = { dir, project, projectMod, files, images, imagesCode: "", maps, mapsCode: "", mapsError: null,
+               data, dataCode: "", dataError: null,
                fontText: fontTextCode(fontTexts), current: null, segments: [] };
     await rebuildImages();
     await rebuildMaps();
+    await rebuildData();
     await loadPak();
     document.body.classList.add("folder-mode");
     $("files").hidden = false;
@@ -764,6 +793,17 @@ setInterval(async () => {
             folder.maps.set(path, { text: await file.text(), lastModified: file.lastModified });
             await rebuildMaps();
             if (path === folder.current) await openFile(path);
+            changed = true;
+        } catch (e) {}
+    }
+
+    // 資料檔被修改（用 VS Code 改數字、之後的資料表編輯器存檔）：重新轉換
+    for (const [path, d] of folder.data) {
+        try {
+            const file = await (await fileHandle(folder.dir, path)).getFile();
+            if (file.lastModified === d.lastModified) continue;
+            folder.data.set(path, { text: await file.text(), lastModified: file.lastModified });
+            await rebuildData();
             changed = true;
         } catch (e) {}
     }

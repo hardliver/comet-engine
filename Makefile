@@ -64,6 +64,10 @@ serve: web
 build/text_test.lua: tests/text/comet.json tests/text/main.lua fonts/c11.bin platform/web/font.js platform/web/cart.js
 	node tools/cart.mjs tests/text
 
+# 資料檔測試用的遊戲檔
+build/data_test.lua: tests/data/comet.json tests/data/main.lua tests/data/species.json tests/data/config.json platform/web/cart.js
+	node tools/cart.mjs tests/data
+
 # 地圖測試用的遊戲檔
 build/map_test.lua: tests/map/comet.json tests/map/main.lua tests/map/maps/test.json tests/map/town.png tests/map/dungeon.png platform/web/cart.js
 	node tools/cart.mjs tests/map
@@ -72,12 +76,13 @@ build/map_test.lua: tests/map/comet.json tests/map/main.lua tests/map/maps/test.
 build/pak_test.pak: tests/pak/make_pak.mjs tools/pak.mjs
 	node tests/pak/make_pak.mjs
 
-check: build/mac web build/text_test.lua build/map_test.lua build/pak_test.pak tests/save/main.lua tests/pak/main.lua $(wildcard tests/system/*.lua)
+check: build/mac web build/text_test.lua build/map_test.lua build/data_test.lua build/pak_test.pak tests/save/main.lua tests/pak/main.lua $(wildcard tests/system/*.lua)
 	./build/mac
 	./build/mac games/move_box.lua build/record.ppm --record build/move_box.rep
 	./build/mac games/move_box.lua build/replay.ppm --replay build/move_box.rep
 	./build/mac build/text_test.lua build/text_test.ppm
 	./build/mac build/map_test.lua build/map_test.ppm
+	./build/mac build/data_test.lua build/data_test.ppm
 	rm -rf build/saves && mkdir -p build/saves
 	./build/mac tests/save/main.lua build/save1.ppm --saves build/saves
 	./build/mac tests/save/main.lua build/save2.ppm --saves build/saves --record build/save.rep

@@ -1,0 +1,4 @@
+[
+  { "id": 1, "name": "芽角羊", "type": "grass", "hp": 45, "moves": ["撞擊", "藤鞭"], "work": { "farm": 1 } },
+  { "id": 7, "name": "囤囤鼠", "type": "normal", "hp": 40, "moves": ["撞擊"], "work": { "carry": 1, "lumber": 1 } }
+]

@@ -1,0 +1,7 @@
+{
+  "start_level": 5,
+  "shiny_chance": 256,
+  "debug": false,
+  "end": "保留字也可以當 key",
+  "with space": -3
+}

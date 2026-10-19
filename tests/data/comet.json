@@ -1,0 +1,10 @@
+{
+  "name": "資料檔測試",
+  "id": "comet/data-test",
+  "sources": ["main.lua"],
+  "data": {
+    "species": "species.json",
+    "config": "config.json"
+  },
+  "output": "../../build/data_test.lua"
+}

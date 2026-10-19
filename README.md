@@ -20,11 +20,12 @@ Nova One 的遊戲引擎。同一份 C 核心，編譯到三個平台：Mac（�
   "id": "作者/repo名稱",
   "sources": ["src/util.lua", "src/battle.lua", "src/main.lua"],
   "images": { "town": "assets/tilemap.png" },
+  "data": { "species": "data/species.json" },
   "output": "build/game.lua"
 }
 ```
 
-`sources` 依順序合併成一個遊戲檔（`output`）；`images` 的 PNG 會轉成遊戲檔裡的圖片資料（遊戲裡用 `IMG.town`），顏色自動加進調色盤。Studio 的資料夾模式會自動合併；命令列用 `node tools/cart.mjs <專案資料夾>`。
+`sources` 依順序合併成一個遊戲檔（`output`）；`images` 的 PNG 會轉成遊戲檔裡的圖片資料（遊戲裡用 `IMG.town`），顏色自動加進調色盤；`data` 的 JSON 會轉成 Lua 表格（遊戲裡用 `DATA.species`，只能有整數、文字、true/false，不能有小數和 null）。Studio 的資料夾模式會自動合併；命令列用 `node tools/cart.mjs <專案資料夾>`。
 錯誤訊息會換算回原本的檔案和行號。
 
 ## 結構
