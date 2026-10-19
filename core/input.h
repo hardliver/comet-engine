@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #define MAX_PLAYERS 4
-#define MAX_BUTTONS 16   // 每位玩家 16 個按鍵（2 bytes），目前用到 12 個
+#define MAX_BUTTONS 16   // 每位玩家 16 個按鍵（2 bytes），目前用到 13 個
 
 // 按鍵編號（暫定，規格 v0.1 才凍結）
 // 0–7 是紅白機也有的按鍵；8 以後是現代手把才有的
@@ -25,6 +25,7 @@ enum {
     BTN_Y      = 9,
     BTN_L      = 10,   // 左肩鍵（LB）
     BTN_R      = 11,   // 右肩鍵（RB）
+    BTN_HOME   = 12,   // HOME（手把中間的 Guide 鍵）：在 Nova 裡回主選單
 };
 
 // 搖桿編號

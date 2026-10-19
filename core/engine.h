@@ -22,6 +22,11 @@ uint32_t engine_seed(void);
 // 正在準備播放重播檔、但遊戲對不上時回傳 2，目前的遊戲繼續跑
 int engine_load(const char *src, size_t len);
 
+// 平台用：載入系統卡匣（Nova 的主選單）。和 engine_load 一樣，
+// 但 Lua 裡多一個 sys 表格，而且之後遊戲執行中可以回 HOME（見 system.h）。
+// 系統卡匣不錄重播（重播只錄遊戲）
+int engine_load_system(const char *src, size_t len);
+
 // 目前遊戲原始碼的 SHA-256（32 bytes）：同一個遊戲、同一個版本才會相同
 const uint8_t *engine_cart_sha(void);
 

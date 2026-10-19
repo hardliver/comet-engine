@@ -18,6 +18,7 @@
 #include "input.h"
 #include "platform.h"
 #include "save.h"
+#include "system.h"
 
 static lua_State *L = NULL;   // 目前這款遊戲的 Lua 執行環境
 static int failed = 0;
@@ -402,7 +403,7 @@ static const luaL_Reg api[] = {
 // 2. 建立沙盒：只開放安全、不會破壞同步的功能
 // ============================================================
 
-static void open_libs(lua_State *L)
+static void open_libs(lua_State *L, int is_system)
 {
     // 只開這幾個標準函式庫；io、os、package、debug 根本沒有編譯進來
     static const luaL_Reg libs[] = {
@@ -434,6 +435,8 @@ static void open_libs(lua_State *L)
     luaL_setfuncs(L, api, 0);
     lua_pop(L, 1);
     save_open_lua(L);   // save、loadsave（在 save.c）
+    // 系統 API 只給系統卡匣。一般遊戲的 Lua 環境裡根本沒有 sys 這個名字
+    if (is_system) system_open_lua(L);
 
     // 畫面大小也給遊戲用
     lua_pushinteger(L, SCREEN_W); lua_setglobal(L, "SCREEN_W");
@@ -453,7 +456,7 @@ static void report_error(void)
     failed = 1;
 }
 
-int script_load(const char *src, size_t len, const char *name)
+int script_load(const char *src, size_t len, const char *name, int is_system)
 {
     if (L != NULL) {
         lua_close(L);   // 關掉上一款遊戲，釋放它用的全部記憶體
@@ -467,7 +470,7 @@ int script_load(const char *src, size_t len, const char *name)
         failed = 1;
         return 1;
     }
-    open_libs(L);
+    open_libs(L, is_system);
 
     // 編譯原始碼。"t" 代表只接受文字，不接受預先編譯好的二進位檔（比較安全）
     if (luaL_loadbufferx(L, src, len, name, "t") != LUA_OK) {

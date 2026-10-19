@@ -9,6 +9,9 @@
 //   ./build/mac [遊戲檔] [輸出圖檔] --replay 檔.rep     播放重播檔，檢查最後的畫面是否一致
 //   加上 --saves 資料夾：存檔寫在那個資料夾（檔名「id.欄位.sav」，id 的 / 換成 _）。
 //   沒加就只存在記憶體裡，程式結束就沒了（測試時不會留下檔案）
+//   ./build/mac 系統卡匣.lua 輸出圖檔 --system --game id 遊戲.lua [--game id 遊戲.lua …]
+//                                                    Nova 模式：載入系統卡匣，用另一組預先寫好的按鍵
+//                                                    跑 150 幀（選遊戲、啟動、回 HOME），測試系統卡匣
 // 沒給遊戲檔、圖檔就用 games/move_box.lua、out.ppm
 //
 // --replay 的結束代碼：0 = 一致，3 = 畫面不同，1 = 其他錯誤。
@@ -23,6 +26,7 @@
 #include "../../core/platform.h"
 #include "../../core/replay.h"
 #include "../../core/save.h"
+#include "../../core/system.h"
 
 // 核心要求平台提供的功能：印出一行訊息
 void platform_log(const char *msg)
@@ -170,10 +174,89 @@ static void scripted_input(int i)
     input_set_stick(0, STICK_RIGHT, rx, ry);
 }
 
+// ---- Nova 模式（--system）----
+// 預先寫好的按鍵：
+//   第 10–13 幀：A（系統卡匣啟動游標所在的第 1 款）
+//   第 14–49 幀：右（遊戲裡移動）
+//   第 50–84 幀：Start＋Select（按住 30 幀 → 第 79 幀之後回 HOME）
+//   第 100–103 幀：下（游標移到第 2 款）；第 110–113 幀：A（啟動第 2 款）
+//   第 130 幀：HOME 鍵（馬上回 HOME）
+#define SYSTEM_FRAMES 150
+#define MAX_GAME_ARGS 8
+
+static void system_input(int i)
+{
+    uint16_t keys = 0;
+    if (i >= 10 && i < 14) keys = 1 << BTN_A;
+    else if (i >= 14 && i < 50) keys = 1 << BTN_RIGHT;
+    else if (i >= 50 && i < 85) keys = (1 << BTN_START) | (1 << BTN_SELECT);
+    else if (i >= 100 && i < 104) keys = 1 << BTN_DOWN;
+    else if (i >= 110 && i < 114) keys = 1 << BTN_A;
+    else if (i == 130) keys = 1 << BTN_HOME;
+    input_set(0, keys);
+    input_set_stick(0, STICK_LEFT, 0, 0);
+    input_set_stick(0, STICK_RIGHT, 0, 0);
+}
+
+// 這就是「平台」在 Nova 模式要做的事：每一幀之後看引擎有沒有請求，有就去載入
+static int run_system(const char *sys_path, const char *out,
+                      const char **ids, const char **paths, int ngames)
+{
+    size_t sys_len = 0;
+    char *sys_src = read_file(sys_path, &sys_len);
+    if (sys_src == NULL) {
+        printf("讀不到系統卡匣 %s\n", sys_path);
+        return 1;
+    }
+    for (int g = 0; g < ngames; g++) {
+        // 名稱用檔名代替（真正的網頁版 Nova 會從 comet.json 的 name 來）
+        system_add_game(ids[g], paths[g]);
+    }
+
+    engine_init();
+    if (engine_load_system(sys_src, sys_len)) return 1;
+
+    for (int i = 0; i < SYSTEM_FRAMES; i++) {
+        system_input(i);
+        engine_frame();
+
+        int req = system_request();
+        if (req == SYS_REQ_LAUNCH) {
+            const char *id = system_request_game();
+            const char *path = NULL;
+            for (int g = 0; g < ngames; g++) {
+                if (strcmp(ids[g], id) == 0) path = paths[g];
+            }
+            size_t len = 0;
+            char *src = path ? read_file(path, &len) : NULL;
+            system_request_done();
+            if (src == NULL) {
+                printf("第 %d 幀：讀不到遊戲 %s，留在 HOME\n", i, id);
+                continue;
+            }
+            printf("第 %d 幀：啟動 %s\n", i, id);
+            engine_load(src, len);
+            free(src);
+        } else if (req == SYS_REQ_HOME) {
+            system_request_done();
+            printf("第 %d 幀：回 HOME\n", i);
+            engine_load_system(sys_src, sys_len);
+        }
+    }
+    free(sys_src);
+
+    if (save_ppm(out) != 0) return 1;
+    printf("%s：Nova 模式跑了 %d 幀，已存成 %s\n", sys_path, SYSTEM_FRAMES, out);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     // 先挑出 --record／--replay，剩下的依序是遊戲檔、輸出圖檔
     const char *record_path = NULL, *replay_path = NULL;
+    int system_mode = 0;
+    const char *game_ids[MAX_GAME_ARGS], *game_paths[MAX_GAME_ARGS];
+    int ngames = 0;
     const char *positional[2] = { "games/move_box.lua", "out.ppm" };
     int npos = 0;
     for (int i = 1; i < argc; i++) {
@@ -183,12 +266,22 @@ int main(int argc, char **argv)
             replay_path = argv[++i];
         } else if (strcmp(argv[i], "--saves") == 0 && i + 1 < argc) {
             save_dir = argv[++i];
+        } else if (strcmp(argv[i], "--system") == 0) {
+            system_mode = 1;
+        } else if (strcmp(argv[i], "--game") == 0 && i + 2 < argc && ngames < MAX_GAME_ARGS) {
+            game_ids[ngames] = argv[++i];
+            game_paths[ngames] = argv[++i];
+            ngames++;
         } else if (npos < 2) {
             positional[npos++] = argv[i];
         }
     }
     const char *path = positional[0];
     const char *out = positional[1];
+
+    if (system_mode) {
+        return run_system(path, out, game_ids, game_paths, ngames);
+    }
 
     size_t len = 0;
     char *src = read_file(path, &len);

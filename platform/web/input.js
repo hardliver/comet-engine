@@ -10,6 +10,7 @@ export const BTN = {
     LEFT: 0, RIGHT: 1, UP: 2, DOWN: 3,
     A: 4, B: 5, START: 6, SELECT: 7,
     X: 8, Y: 9, L: 10, R: 11,
+    HOME: 12,   // 手把中間的 Guide 鍵：在 Nova 裡回主選單（很多作業系統會先攔截，所以也可以按住 Start＋Select）
 };
 export const STICK_MAX = 127;
 
@@ -108,13 +109,14 @@ export function setupKeyboard() {
 // ============================================================
 // 瀏覽器把認得的手把整理成「標準配置」，編號固定：
 //   按鍵 0–3：A（下）B（右）X（左）Y（上）  4、5：LB、RB
-//        8：Back/Select  9：Start  12–15：十字鍵 上下左右
+//        8：Back/Select  9：Start  12–15：十字鍵 上下左右  16：Guide（中間的大按鍵）
 //   軸   0、1：左搖桿 x、y   2、3：右搖桿 x、y（-1～1）
 
 const PAD_BUTTONS = [
     [0, BTN.A], [1, BTN.B], [2, BTN.X], [3, BTN.Y],
     [4, BTN.L], [5, BTN.R], [8, BTN.SELECT], [9, BTN.START],
     [12, BTN.UP], [13, BTN.DOWN], [14, BTN.LEFT], [15, BTN.RIGHT],
+    [16, BTN.HOME],
 ];
 const PAD_DEADZONE = 0.15;
 

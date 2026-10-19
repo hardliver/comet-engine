@@ -36,6 +36,7 @@ core/                純 C 核心：不碰檔案、視窗、硬體
   input              按鍵狀態：平台寫入、遊戲讀取
   replay             重播檔：錄下每一幀的輸入，可完全重現同一場遊戲（格式見 replay.h）
   save               存檔：Lua 的值 ↔ bytes 的編碼，讀到的存檔也記進重播檔（見 save.h）
+  system             系統卡匣模式：Nova 主選單用的 sys API、啟動遊戲、回 HOME（見 system.h）
   sha256             SHA-256 指紋：辨認遊戲版本、比對畫面
   platform.h         核心需要平台提供的功能（印訊息、保管存檔）
   comet_lua_user.h   對 Lua 的設定（固定雜湊種子、輸出導向）
@@ -67,6 +68,7 @@ make                      # Mac 版
 ./build/mac games/xxx.lua # 跑指定遊戲，產生 out.ppm
 ./build/mac games/xxx.lua out.ppm --replay 檔.rep   # 播放重播檔，檢查畫面是否一致（0 = 一致、3 = 不同）
 ./build/mac games/xxx.lua out.ppm --saves 資料夾    # 存檔寫在資料夾裡（沒加只存在記憶體）
+./build/mac 系統.lua out.ppm --system --game id 遊戲.lua   # Nova 模式：系統卡匣＋遊戲清單，跑預設按鍵
 make serve                # 網頁版：瀏覽器開 http://localhost:8420
 make check                # 自動測試
 ```
@@ -106,6 +108,7 @@ function _draw()   end   -- 每幀一次：畫畫面
 - 畫面格式 320×240、8-bit 調色盤、按鍵編號（目前 12 個，最多 16 個）、搖桿範圍（±127）皆為暫定，規格 v0.1 才凍結
 - 同一串按鍵，Mac 版與網頁版輸出逐像素相同（`make check`）
 - 重播：遊玩頁從開局就一直錄，按「下載重播」得到 `.rep`（從頭到現在，錄影繼續）；把 `.rep` 拖進遊玩頁就用目前的遊戲播放，播完顯示最後的畫面是否一致，之後可接著玩。每次開局用新的亂數種子（記在重播檔裡）；Studio 與自動測試固定用種子 1
+- 系統卡匣：`engine_load_system()` 載入的卡匣多一個 `sys` 表格（`sys.games()`、`sys.launch(id)`、`sys.last_game()`），一般遊戲沒有。同一時間只有一個 Lua 環境：啟動遊戲時關掉系統卡匣，回 HOME（HOME 鍵，或按住 Start＋Select 0.5 秒）時重新載入。載入哪個檔案由平台決定（引擎只發出請求），網頁版的大廳在 nova-system
 - 存檔：`save(欄位, 值)`、`loadsave(欄位)`，8 個欄位、每個最多 16 KB。網頁版存在瀏覽器的 localStorage（依遊戲 id 分開，同一個網址的遊玩頁和 Studio 共用）；Mac 版用 `--saves`。播放重播時從重播檔讀、不寫入
 - 網頁輸入：
   - 鍵盤：WASD = 左搖桿、方向鍵 = 右搖桿、K/L/J/I = A/B/X/Y（空白鍵也是 A）、Q/E = L/R、Enter = Start、Tab = Select

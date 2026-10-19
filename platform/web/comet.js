@@ -74,6 +74,16 @@ export function saveKey(gameId, slot) {
     return `comet:save:${gameId}:${slot}`;
 }
 
+// 把 JavaScript 字串複製進 wasm 記憶體，變成 C 字串（結尾補 0）。用完要 free
+function writeCString(exports, text) {
+    const bytes = new TextEncoder().encode(text);
+    const ptr = exports.malloc(bytes.length + 1);
+    const mem = new Uint8Array(exports.memory.buffer);
+    mem.set(bytes, ptr);
+    mem[ptr + bytes.length] = 0;
+    return ptr;
+}
+
 export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log, saveStore = browserSaveStore() } = {}) {
     let exports = null;
 
@@ -137,6 +147,31 @@ export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log
             exports.free(ptr);
             return err;
         },
+
+        // ---- 系統卡匣（Nova 模式，說明見 core/system.h）----
+
+        // 載入系統卡匣：和 load() 一樣，但 Lua 裡多一個 sys 表格
+        loadSystem(source) {
+            const bytes = new TextEncoder().encode(source);
+            const ptr = exports.malloc(bytes.length);
+            new Uint8Array(exports.memory.buffer).set(bytes, ptr);
+            const err = exports.engine_load_system(ptr, bytes.length);
+            exports.free(ptr);
+            return err;
+        },
+        // 遊戲清單（系統卡匣用 sys.games() 看到的）
+        clearGames() { exports.system_clear_games(); },
+        addGame(id, name) {
+            const a = writeCString(exports, id), b = writeCString(exports, name);
+            const err = exports.system_add_game(a, b);
+            exports.free(a);
+            exports.free(b);
+            return err;
+        },
+        // 每一幀之後問：0 沒事、1 要啟動 requestGame() 這款、2 要回 HOME。做完呼叫 requestDone()
+        request() { return exports.system_request(); },
+        requestGame() { return readCString(exports, exports.system_request_game()); },
+        requestDone() { exports.system_request_done(); },
 
         // 只檢查語法，不執行（正在跑的遊戲不受影響）。沒錯回傳 null，有錯回傳錯誤訊息
         check(source) {

@@ -11,8 +11,8 @@
 #include <stdint.h>
 
 // 載入並執行遊戲原始碼（會先關掉上一款遊戲）。
-// name 是錯誤訊息裡顯示的檔名。成功回傳 0
-int script_load(const char *src, size_t len, const char *name);
+// name 是錯誤訊息裡顯示的檔名。is_system：系統卡匣（多一個 sys 表格）。成功回傳 0
+int script_load(const char *src, size_t len, const char *name, int is_system);
 
 // 設定下一次 script_load() 時 rnd() 的亂數種子（0 會被換成 1）
 void script_set_seed(uint32_t seed);

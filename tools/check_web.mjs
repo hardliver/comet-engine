@@ -16,6 +16,9 @@
 // 測試 9：存檔（tests/save）。檢查方塊全綠；網頁版跑兩次（第二次讀到第一次的存檔），
 //         畫面和 Mac 版的 build/save1.ppm、save2.ppm 相同，存檔內容和 Mac 版的檔案逐 byte 相同；
 //         網頁版錄的重播檔和 Mac 版相同；播放 Mac 的重播檔時讀到的是重播檔裡的存檔，而且不會寫入
+// 測試 10：系統卡匣（tests/system）。照 Mac 版同樣的按鍵：啟動、回 HOME、換一款、HOME 鍵，
+//          切換的幀數和最後的畫面和 Mac 版的 build/system.ppm 相同；遊戲裡沒有 sys；
+//          沒載入系統卡匣時，Start＋Select 不會觸發回 HOME
 
 import fs from "fs";
 import crypto from "crypto";
@@ -344,6 +347,90 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
         if (st !== 3 || engine.replay_matched() !== 1) problems.push(`播放結果：狀態 ${st}、一致 ${engine.replay_matched()}`);
         if (!looksRight(framebufferRGB(engine), 2)) problems.push("播放時沒有讀到重播檔裡的存檔");
         if (empty.size !== 0) problems.push("播放重播時寫入了存檔");
+    }
+    if (problems.length === 0) ok(name);
+    else fail(name, problems.join("；"));
+}
+
+// ---- 測試 10 ----
+{
+    const name = "系統卡匣：啟動遊戲、回 HOME、遊戲碰不到 sys，和 Mac 版相同";
+    const problems = [];
+    const cstr = (engine, text) => {
+        const b = new TextEncoder().encode(text);
+        const p = engine.malloc(b.length + 1);
+        const mem = new Uint8Array(engine.memory.buffer);
+        mem.set(b, p);
+        mem[p + b.length] = 0;
+        return p;
+    };
+    const loadWith = (engine, fn, source) => {
+        const bytes = new TextEncoder().encode(source);
+        const ptr = engine.malloc(bytes.length);
+        new Uint8Array(engine.memory.buffer).set(bytes, ptr);
+        const err = engine[fn](ptr, bytes.length);
+        engine.free(ptr);
+        return err;
+    };
+    const px = (engine, x, y) => {
+        const rgb = framebufferRGB(engine), i = (y * W + x) * 3;
+        return [rgb[i], rgb[i + 1], rgb[i + 2]].join(",");
+    };
+    const GREEN = "0,228,54";
+    const files = { "test/a": "tests/system/game_a.lua", "test/b": "tests/system/game_b.lua" };
+
+    // 和 platform/mac/main.c 的 system_input() 完全相同
+    const keysAt = (i) =>
+        i >= 10 && i < 14 ? 1 << BTN_A :
+        i >= 14 && i < 50 ? 1 << BTN_RIGHT :
+        i >= 50 && i < 85 ? (1 << 6) | (1 << 7) :
+        i >= 100 && i < 104 ? 1 << BTN_DOWN :
+        i >= 110 && i < 114 ? 1 << BTN_A :
+        i === 130 ? 1 << 12 : 0;
+
+    const engine = await loadEngine();
+    const sysSrc = fs.readFileSync("tests/system/system.lua", "utf8");
+    for (const [id, file] of Object.entries(files)) {
+        const a = cstr(engine, id), b = cstr(engine, file);
+        engine.system_add_game(a, b);
+        engine.free(a); engine.free(b);
+    }
+    loadWith(engine, "engine_load_system", sysSrc);
+    const events = [];
+    for (let i = 0; i < 150; i++) {
+        engine.input_set(0, keysAt(i));
+        engine.input_set_stick(0, 0, 0, 0);
+        engine.input_set_stick(0, 1, 0, 0);
+        engine.engine_frame();
+        if (i === 40 && px(engine, 6, 232) !== GREEN) problems.push("遊戲裡看得到 sys");
+        const req = engine.system_request();
+        if (req === 1) {
+            const mem = new Uint8Array(engine.memory.buffer);
+            let p = engine.system_request_game(), end = p;
+            while (mem[end]) end++;
+            const id = new TextDecoder().decode(mem.subarray(p, end));
+            engine.system_request_done();
+            events.push(`${i} 啟動 ${id}`);
+            loadWith(engine, "engine_load", fs.readFileSync(files[id], "utf8"));
+        } else if (req === 2) {
+            engine.system_request_done();
+            events.push(`${i} HOME`);
+            loadWith(engine, "engine_load_system", sysSrc);
+        }
+    }
+    const want = "10 啟動 test/a,79 HOME,110 啟動 test/b,130 HOME";
+    if (events.join(",") !== want) problems.push(`切換順序：${events.join(",")}（應該是 ${want}）`);
+    const ppm = fs.readFileSync("build/system.ppm");
+    if (Buffer.compare(framebufferRGB(engine), ppm.subarray(ppm.length - W * H * 3)) !== 0) problems.push("最後的畫面和 Mac 版不同");
+    if (px(engine, 6, 232) !== GREEN || px(engine, 14, 232) !== GREEN) problems.push("系統卡匣的檢查方塊不是綠色");
+    if (px(engine, 25, 85) !== GREEN) problems.push("回 HOME 後，系統卡匣不知道剛剛玩的是 test/b");
+
+    // 沒載入系統卡匣：Start＋Select 照常交給遊戲
+    {
+        const e2 = await loadEngine();
+        loadWith(e2, "engine_load", fs.readFileSync(files["test/a"], "utf8"));
+        for (let i = 0; i < 60; i++) { e2.input_set(0, (1 << 6) | (1 << 7)); e2.engine_frame(); }
+        if (e2.system_request() !== 0) problems.push("單獨玩遊戲時，Start＋Select 也觸發了回 HOME");
     }
     if (problems.length === 0) ok(name);
     else fail(name, problems.join("；"));
