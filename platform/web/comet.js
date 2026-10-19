@@ -131,8 +131,24 @@ export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log
     const fbAddr  = exports.gfx_framebuffer();
     const palAddr = exports.gfx_palette();
 
+    let pakPtr = 0;   // 目前資源包在 wasm 記憶體裡的位置（0 = 沒有）
+
     return {
         exports,
+
+        // 資源包（見 core/pak.h）：要在 load() 之前設定。bytes 是 Uint8Array，null = 沒有。
+        // 和 load() 不同，這塊記憶體要一直留著（引擎需要時才去讀），換資源包時才 free。
+        // 成功回傳 0；格式不對回傳 1（原因透過 onLog 顯示）
+        setPak(bytes) {
+            exports.pak_set(0, 0);
+            if (pakPtr) exports.free(pakPtr);
+            pakPtr = 0;
+            if (!bytes) return 0;
+            pakPtr = exports.malloc(bytes.length);
+            if (!pakPtr) return 1;
+            new Uint8Array(exports.memory.buffer).set(bytes, pakPtr);
+            return exports.pak_set(pakPtr, bytes.length);
+        },
 
         // 把 Lua 原始碼（文字）交給引擎，成功回傳 0：
         // 1. 用 C 的 malloc 在 wasm 記憶體裡借一塊空間

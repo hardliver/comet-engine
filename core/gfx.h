@@ -33,6 +33,12 @@ void gfx_rect(int x, int y, int w, int h, uint8_t color);
 // 設定第 index 號顏色。0–15 是預設的 16 色，16 以後通常給圖片用
 void gfx_pal(int index, uint8_t r, uint8_t g, uint8_t b);
 
+// 調色盤染色：把 first 起 count 個顏色乘上 (r, g, b) / 256（256 = 不變，128 = 一半亮）。
+// 每次都從「原本的顏色」（pal() 最後設定的值）算起，所以重複呼叫不會越染越深；
+// paltint(first, count, 256, 256, 256) 就是還原。
+// 用途：角色走進暗的房間，整組角色顏色一起變暗、偏色，不用每個像素去算
+void gfx_paltint(int first, int count, int r, int g, int b);
+
 // ---- 相機 ----
 // 設定之後，所有繪圖（cls 除外）都會往左上平移 (x, y)。
 // 地圖比畫面大的時候，移動相機就是捲動畫面
@@ -62,6 +68,35 @@ void gfx_spr(int img, int n, int dx, int dy, int flip_x, int flip_y);
 int gfx_image_w(int img);
 int gfx_image_h(int img);
 int gfx_image_tile(int img);
+
+// ---- 背景與深度（固定視角遊戲用，見 pak.h）----
+// 背景：320 × 240 個顏色編號，畫面最底層。深度：160 × 120（每 2 × 2 像素一格），
+// 每格是「這個位置最前面的遮擋物離鏡頭多遠」，單位 8 公分，0 = 沒有東西擋。
+// 第一次用到才配置記憶體（不用背景的遊戲不佔記憶體），換遊戲時釋放。
+
+#define BG_DEPTH_W (SCREEN_W / 2)
+#define BG_DEPTH_H (SCREEN_H / 2)
+#define BG_DEPTH_UNIT 8           // 深度的單位：8 公分
+
+// 背景、深度的陣列（給資源包模組寫入）；記憶體不夠回傳 NULL
+uint8_t *gfx_bg_pixels(void);
+uint8_t *gfx_bg_depth(void);
+
+// 有沒有載入背景
+int gfx_bg_loaded(void);
+void gfx_bg_set_loaded(int loaded);
+
+// 把背景畫到畫面上（受相機影響：相機往右 3，背景就往左 3，用來做畫面震動）
+void gfx_bg_draw(void);
+
+// 背景在畫面 (x, y) 這一點的深度（公分，0 = 沒有遮擋物）；除錯和遊戲判斷用
+int gfx_bg_depth_at(int x, int y);
+
+// 畫一格角色：pixels 是 w × h 個顏色編號（0 透明），畫到 (dx, dy)，放大成 dw × dh。
+// flip_x：左右翻轉。depth：角色離鏡頭幾公分；背景那一點的遮擋物比角色近，就不畫那一點。
+// depth = 0 代表不做深度測試（介面、特效）
+void gfx_sprite_draw(const uint8_t *pixels, int w, int h,
+                     int dx, int dy, int dw, int dh, int flip_x, int depth);
 
 // ---- 文字 ----
 // 字型資料的格式和 fonts/c11.bin 相同（見 tools/font/c11_convert.py）：

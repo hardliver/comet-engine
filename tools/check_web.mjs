@@ -19,6 +19,9 @@
 // 測試 10：系統卡匣（tests/system）。照 Mac 版同樣的按鍵：啟動、回 HOME、換一款、HOME 鍵，
 //          切換的幀數和最後的畫面和 Mac 版的 build/system.ppm 相同；遊戲裡沒有 sys；
 //          沒載入系統卡匣時，Start＋Select 不會觸發回 HOME
+// 測試 11：資源包（tests/pak）。檢查方塊全綠；網頁版和 Mac 版的 build/pak_test.ppm 逐像素相同；
+//          畫面上的點對（被背景擋住、沒被擋住、放大、翻轉、染色）；
+//          遊戲指紋 = SHA-256(遊戲檔指紋 + 資源包內容指紋)
 
 import fs from "fs";
 import crypto from "crypto";
@@ -431,6 +434,51 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
         loadWith(e2, "engine_load", fs.readFileSync(files["test/a"], "utf8"));
         for (let i = 0; i < 60; i++) { e2.input_set(0, (1 << 6) | (1 << 7)); e2.engine_frame(); }
         if (e2.system_request() !== 0) problems.push("單獨玩遊戲時，Start＋Select 也觸發了回 HOME");
+    }
+    if (problems.length === 0) ok(name);
+    else fail(name, problems.join("；"));
+}
+
+// ---- 測試 11 ----
+{
+    const name = "資源包：背景、深度遮擋、角色、染色，網頁版與 Mac 版相同";
+    const problems = [];
+    try {
+        const engine = await loadEngine();
+        const pak = fs.readFileSync("build/pak_test.pak");
+        // 資源包的記憶體由平台保管，遊戲執行期間不能 free
+        const pp = engine.malloc(pak.length);
+        new Uint8Array(engine.memory.buffer).set(pak, pp);
+        if (engine.pak_set(pp, pak.length) !== 0) problems.push("pak_set 失敗");
+        const src = fs.readFileSync("tests/pak/main.lua", "utf8");
+        load(engine, src);
+        for (let i = 0; i < 90; i++) { scriptedInput(engine, i); engine.engine_frame(); }
+        const rgb = framebufferRGB(engine);
+        const ppm = fs.readFileSync("build/pak_test.ppm");
+        if (Buffer.compare(rgb, ppm.subarray(ppm.length - W * H * 3)) !== 0) problems.push("畫面和 Mac 版不同");
+        const at = (x, y) => [...rgb.subarray((y * W + x) * 3, (y * W + x) * 3 + 3)].join(",");
+        const want = {
+            "80,96": "40,50,60",       // 被左半邊的遮擋物擋住：看到背景
+            "90,96": "120,100,50",     // 在遮擋物前面：第 16 色染成一半亮
+            "196,84": "120,100,50",    // 放大兩倍的左上角
+            "203,99": "120,100,50",    // 放大兩倍的右下角
+            "195,90": "70,80,90",      // 放大兩倍的範圍外
+            "249,149": "0,250,250",    // 翻轉
+            "248,149": "100,110,120",
+            "260,149": "0,250,250",    // 不翻轉
+            "261,149": "100,110,120",
+        };
+        for (const [k, v] of Object.entries(want)) {
+            const [x, y] = k.split(",").map(Number);
+            if (at(x, y) !== v) problems.push(`(${k}) 是 ${at(x, y)}，應該是 ${v}`);
+        }
+        for (let i = 0; i < 9; i++) if (at(6 + i * 8, 232) !== "0,228,54") problems.push(`第 ${i + 1} 個檢查方塊不是綠色`);
+        const inner = crypto.createHash("sha256").update(Buffer.from(src)).digest();
+        const expect = crypto.createHash("sha256").update(inner).update(pak.subarray(12, 44)).digest();
+        const got = Buffer.from(new Uint8Array(engine.memory.buffer, engine.engine_cart_sha(), 32));
+        if (Buffer.compare(expect, got) !== 0) problems.push("遊戲指紋沒有包含資源包");
+    } catch (e) {
+        problems.push(String(e));
     }
     if (problems.length === 0) ok(name);
     else fail(name, problems.join("；"));

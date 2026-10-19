@@ -446,6 +446,29 @@ async function readBytes(dir, path) {
     return { bytes: new Uint8Array(await file.arrayBuffer()), lastModified: file.lastModified };
 }
 
+// 資源包（comet.json 的 "pak"，見 core/pak.h）：讀進來交給引擎。
+// 回傳 true 代表資源包有變（要重新執行）
+async function loadPak() {
+    const path = folder.project.pak;
+    if (!path) {
+        engine.setPak(null);
+        folder.pakMod = undefined;
+        return false;
+    }
+    try {
+        const file = await (await fileHandle(folder.dir, path)).getFile();
+        if (file.lastModified === folder.pakMod) return false;
+        folder.pakMod = file.lastModified;
+        if (engine.setPak(new Uint8Array(await file.arrayBuffer()))) consoleAdd(`資源包 ${path} 格式不對`, "err");
+        return true;
+    } catch (e) {
+        if (folder.pakMod !== null) toast(`找不到資源包 ${path}`, 5000);
+        folder.pakMod = null;
+        engine.setPak(null);
+        return false;
+    }
+}
+
 // 把 comet.json 的 images 轉成 Lua 程式碼（PNG → 顏色編號 → base64）
 async function rebuildImages() {
     try {
@@ -569,6 +592,7 @@ async function openFolder(dir) {
                fontText: fontTextCode(fontTexts), current: null, segments: [] };
     await rebuildImages();
     await rebuildMaps();
+    await loadPak();
     document.body.classList.add("folder-mode");
     $("files").hidden = false;
     $("project-name").textContent = project.name || dir.name;
@@ -743,6 +767,9 @@ setInterval(async () => {
             changed = true;
         } catch (e) {}
     }
+
+    // 資源包被重新產生（例如跑了打包程式）
+    if (await loadPak()) changed = true;
 
     // comet.json 被修改（例如加了新圖片、新檔案）：整個重新開啟
     try {

@@ -60,6 +60,8 @@ export async function buildImages(project, readBytes, inflate) {
     if (entries.length === 0) return "";
 
     const colors = new Map();   // "r,g,b" → 顏色編號
+    // 有資源包（comet.json 的 "pak"）的遊戲：128–255 留給背景（見 core/pak.h），圖片只能用 16–127
+    const lastColor = project.pak ? 127 : 255;
     const lines = [
         "-- ==================== 圖片（comet.json 的 images，自動產生） ====================",
         "IMG = {}",
@@ -75,7 +77,10 @@ export async function buildImages(project, readBytes, inflate) {
             const key = `${r},${g},${b}`;
             if (!colors.has(key)) {
                 const n = FIRST_IMAGE_COLOR + colors.size;
-                if (n > 255) throw new Error(`圖片的顏色超過 ${256 - FIRST_IMAGE_COLOR} 種（加上 ${e.file} 之後），請減少顏色`);
+                if (n > lastColor) {
+                    throw new Error(`圖片的顏色超過 ${lastColor + 1 - FIRST_IMAGE_COLOR} 種（加上 ${e.file} 之後），請減少顏色` +
+                        (project.pak ? "（有資源包的遊戲，128–255 色留給背景）" : ""));
+                }
                 colors.set(key, n);
             }
             idx[i] = colors.get(key);

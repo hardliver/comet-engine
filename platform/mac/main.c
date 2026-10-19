@@ -7,6 +7,7 @@
 //   ./build/mac [遊戲檔] [輸出圖檔]                    用預先寫好的按鍵跑 90 幀
 //   ./build/mac [遊戲檔] [輸出圖檔] --record 檔.rep     同上，並把輸入錄成重播檔
 //   ./build/mac [遊戲檔] [輸出圖檔] --replay 檔.rep     播放重播檔，檢查最後的畫面是否一致
+//   加上 --pak 檔.pak：遊戲的資源包（背景、角色動畫，見 core/pak.h）
 //   加上 --saves 資料夾：存檔寫在那個資料夾（檔名「id.欄位.sav」，id 的 / 換成 _）。
 //   沒加就只存在記憶體裡，程式結束就沒了（測試時不會留下檔案）
 //   ./build/mac 系統卡匣.lua 輸出圖檔 --system --game id 遊戲.lua [--game id 遊戲.lua …]
@@ -23,6 +24,7 @@
 #include "../../core/engine.h"
 #include "../../core/gfx.h"
 #include "../../core/input.h"
+#include "../../core/pak.h"
 #include "../../core/platform.h"
 #include "../../core/replay.h"
 #include "../../core/save.h"
@@ -253,7 +255,7 @@ static int run_system(const char *sys_path, const char *out,
 int main(int argc, char **argv)
 {
     // 先挑出 --record／--replay，剩下的依序是遊戲檔、輸出圖檔
-    const char *record_path = NULL, *replay_path = NULL;
+    const char *record_path = NULL, *replay_path = NULL, *pak_path = NULL;
     int system_mode = 0;
     const char *game_ids[MAX_GAME_ARGS], *game_paths[MAX_GAME_ARGS];
     int ngames = 0;
@@ -264,6 +266,8 @@ int main(int argc, char **argv)
             record_path = argv[++i];
         } else if (strcmp(argv[i], "--replay") == 0 && i + 1 < argc) {
             replay_path = argv[++i];
+        } else if (strcmp(argv[i], "--pak") == 0 && i + 1 < argc) {
+            pak_path = argv[++i];
         } else if (strcmp(argv[i], "--saves") == 0 && i + 1 < argc) {
             save_dir = argv[++i];
         } else if (strcmp(argv[i], "--system") == 0) {
@@ -291,6 +295,18 @@ int main(int argc, char **argv)
     }
 
     engine_init();
+
+    // 資源包：要在載入遊戲之前交給引擎（遊戲的指紋包含資源包）。
+    // 整個程式執行期間都要用，所以不 free
+    if (pak_path != NULL) {
+        size_t plen = 0;
+        char *pk = read_file(pak_path, &plen);
+        if (pk == NULL) {
+            printf("讀不到資源包 %s\n", pak_path);
+            return 1;
+        }
+        if (pak_set((const uint8_t *)pk, plen)) return 1;
+    }
 
     // 播放：要在載入遊戲「之前」把重播檔交給引擎（引擎要先知道種子）
     if (replay_path != NULL) {

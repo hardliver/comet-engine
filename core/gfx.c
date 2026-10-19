@@ -33,6 +33,14 @@ static const uint8_t default_palette[16 * 3] = {
 // 目前的調色盤：256 色，每色 R、G、B 各 1 byte。遊戲可以用 pal() 改
 static uint8_t palette[256 * 3];
 
+// 原本的顏色：pal() 設定的值。paltint() 從這裡算出染色後的顏色寫進 palette
+static uint8_t base_palette[256 * 3];
+
+// 背景與深度（第一次用到才配置）
+static uint8_t *bg_pixels = NULL;
+static uint8_t *bg_depth = NULL;
+static int bg_loaded = 0;
+
 // 相機位置
 static int cam_x = 0;
 static int cam_y = 0;
@@ -56,6 +64,12 @@ void gfx_reset(void)
 {
     memset(palette, 0, sizeof(palette));
     memcpy(palette, default_palette, sizeof(default_palette));
+    memcpy(base_palette, palette, sizeof(palette));
+    free(bg_pixels);
+    free(bg_depth);
+    bg_pixels = NULL;
+    bg_depth = NULL;
+    bg_loaded = 0;
     cam_x = 0;
     cam_y = 0;
     for (int i = 1; i <= MAX_IMAGES; i++) {
@@ -121,6 +135,29 @@ void gfx_pal(int index, uint8_t r, uint8_t g, uint8_t b)
     palette[index * 3 + 0] = r;
     palette[index * 3 + 1] = g;
     palette[index * 3 + 2] = b;
+    base_palette[index * 3 + 0] = r;
+    base_palette[index * 3 + 1] = g;
+    base_palette[index * 3 + 2] = b;
+}
+
+// 乘完再除以 256（右移 8 位），超過 255 就停在 255（染成偏紅時紅色可以 > 256）
+static uint8_t tint(uint8_t c, int m)
+{
+    int v = (c * m) >> 8;
+    return (uint8_t)(v > 255 ? 255 : v);
+}
+
+void gfx_paltint(int first, int count, int r, int g, int b)
+{
+    if (r < 0) r = 0;
+    if (g < 0) g = 0;
+    if (b < 0) b = 0;
+    for (int i = first; i < first + count; i++) {
+        if (i < 0 || i > 255) continue;
+        palette[i * 3 + 0] = tint(base_palette[i * 3 + 0], r);
+        palette[i * 3 + 1] = tint(base_palette[i * 3 + 1], g);
+        palette[i * 3 + 2] = tint(base_palette[i * 3 + 2], b);
+    }
 }
 
 void gfx_camera(int x, int y)
@@ -216,6 +253,92 @@ void gfx_spr(int img, int n, int dx, int dy, int flip_x, int flip_y)
     int sx = (n % cols) * t;
     int sy = (n / cols) * t;
     gfx_sspr(img, sx, sy, t, t, dx, dy, t, t, flip_x, flip_y);
+}
+
+// ============================================================
+// 背景與深度
+// ============================================================
+
+uint8_t *gfx_bg_pixels(void)
+{
+    if (bg_pixels == NULL) bg_pixels = calloc(SCREEN_W * SCREEN_H, 1);
+    return bg_pixels;
+}
+
+uint8_t *gfx_bg_depth(void)
+{
+    if (bg_depth == NULL) bg_depth = calloc(BG_DEPTH_W * BG_DEPTH_H, 1);
+    return bg_depth;
+}
+
+int gfx_bg_loaded(void) { return bg_loaded && bg_pixels != NULL; }
+void gfx_bg_set_loaded(int loaded) { bg_loaded = loaded; }
+
+void gfx_bg_draw(void)
+{
+    if (!gfx_bg_loaded()) return;
+    // 一列一列複製。相機是 0 的時候整列直接 memcpy，最快
+    for (int y = 0; y < SCREEN_H; y++) {
+        int sy = y + cam_y;                 // 畫面第 y 列對應背景的第 sy 列
+        if (sy < 0 || sy >= SCREEN_H) continue;
+        int x0 = 0, x1 = SCREEN_W;          // 畫面上要畫的範圍
+        if (cam_x > 0) x1 = SCREEN_W - cam_x;
+        if (cam_x < 0) x0 = -cam_x;
+        if (x1 <= x0) continue;
+        memcpy(&framebuffer[y * SCREEN_W + x0], &bg_pixels[sy * SCREEN_W + x0 + cam_x], (size_t)(x1 - x0));
+    }
+}
+
+// 背景座標 (bx, by) 的遮擋物深度（公分）
+static int depth_at_bg(int bx, int by)
+{
+    if (bg_depth == NULL || bx < 0 || by < 0 || bx >= SCREEN_W || by >= SCREEN_H) return 0;
+    return bg_depth[(by >> 1) * BG_DEPTH_W + (bx >> 1)] * BG_DEPTH_UNIT;
+}
+
+int gfx_bg_depth_at(int x, int y)
+{
+    return depth_at_bg(x + cam_x, y + cam_y);
+}
+
+void gfx_sprite_draw(const uint8_t *pixels, int w, int h,
+                     int dx, int dy, int dw, int dh, int flip_x, int depth)
+{
+    if (pixels == NULL || w <= 0 || h <= 0 || dw <= 0 || dh <= 0) return;
+    // 深度測試只看背景的深度圖：背景的遮擋物（柱子、桌子、門框）比角色近，就被擋住。
+    // 角色之間誰擋誰，由遊戲照遠到近的順序畫（後畫的蓋掉先畫的）
+    int test = depth > 0 && bg_depth != NULL && bg_loaded;
+    // 深度圖的單位是 8 公分：先把角色的深度換成同樣的單位，迴圈裡只比 byte
+    int dz = depth / BG_DEPTH_UNIT;
+    if (dz > 255) dz = 255;
+
+    // 背景座標 = 畫面座標 + 相機；畫面座標 = 角色座標 - 相機
+    int bx0 = dx, by0 = dy;
+    dx -= cam_x;
+    dy -= cam_y;
+    for (int y = 0; y < dh; y++) {
+        int py = dy + y;
+        if (py < 0 || py >= SCREEN_H) continue;
+        const uint8_t *row = pixels + (y * h / dh) * w;
+        int by = by0 + y;
+        const uint8_t *drow = (test && by >= 0 && by < SCREEN_H) ? bg_depth + (by >> 1) * BG_DEPTH_W : NULL;
+        for (int x = 0; x < dw; x++) {
+            int px = dx + x;
+            if (px < 0 || px >= SCREEN_W) continue;
+            int tx = x * w / dw;
+            if (flip_x) tx = w - 1 - tx;
+            uint8_t c = row[tx];
+            if (c == 0) continue;           // 透明
+            if (drow != NULL) {
+                int bx = bx0 + x;
+                if (bx >= 0 && bx < SCREEN_W) {
+                    uint8_t d = drow[bx >> 1];
+                    if (d != 0 && d < dz) continue;   // 被背景的東西擋住
+                }
+            }
+            framebuffer[py * SCREEN_W + px] = c;
+        }
+    }
 }
 
 // ============================================================

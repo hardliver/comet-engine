@@ -129,31 +129,46 @@ function playReplay(bytes) {
 // 要玩哪一款：網址有 ?game=xxx.lua 就載那個，否則載 game.lua
 const params = new URLSearchParams(location.search);
 const gameUrl = params.get("game") || "game.lua";
+// 資源包：遊戲旁邊有同名的 .pak 就一起載入（game.lua → game.pak），沒有也沒關係
+const pakRes = await fetch(gameUrl.replace(/\.lua$/, "") + ".pak").catch(() => null);
+if (pakRes && pakRes.ok) engine.setPak(new Uint8Array(await pakRes.arrayBuffer()));
 startGame(await fetch(gameUrl).then((r) => r.text()), gameUrl.split("/").pop().replace(/\.lua$/, ""));
 
 // 換遊戲：按「載入遊戲」選檔案，或在電腦上把 .lua 檔拖進網頁。
-// .rep 是重播檔：用目前的遊戲播放
-function loadFile(file) {
-    if (file.name.endsWith(".rep")) {
-        file.arrayBuffer().then((buf) => playReplay(new Uint8Array(buf)));
+// .rep 是重播檔：用目前的遊戲播放。
+// .pak 是資源包：可以和 .lua 一起選（或一起拖進來）；只給 .pak 就換掉目前遊戲的資源包、重新開始
+async function loadFiles(files) {
+    files = [...files];
+    const rep = files.find((f) => f.name.endsWith(".rep"));
+    const pak = files.find((f) => f.name.endsWith(".pak"));
+    const lua = files.find((f) => f.name.endsWith(".lua"));
+    if (rep && !lua && !pak) {
+        playReplay(new Uint8Array(await rep.arrayBuffer()));
         return;
     }
-    file.text().then((src) => {
-        if (!startGame(src, file.name.replace(/\.lua$/, ""))) hint.classList.remove("show");
-    });
+    if (lua && !pak) engine.setPak(null);   // 換成另一個遊戲：上一個的資源包不能留著
+    if (pak && engine.setPak(new Uint8Array(await pak.arrayBuffer()))) {
+        showHint("資源包格式不對", 5000);
+        return;
+    }
+    if (lua) {
+        if (!startGame(await lua.text(), lua.name.replace(/\.lua$/, ""))) hint.classList.remove("show");
+    } else if (pak && currentSource) {
+        if (!startGame(currentSource, currentName)) hint.classList.remove("show");
+    }
 }
 const picker = document.getElementById("file-picker");
 document.getElementById("btn-load").addEventListener("click", () => picker.click());
 document.getElementById("btn-load-touch").addEventListener("click", () => picker.click());
 document.getElementById("btn-load-touch").addEventListener("click", () => menu.classList.remove("show"));
 picker.addEventListener("change", () => {
-    if (picker.files[0]) loadFile(picker.files[0]);
+    if (picker.files.length) loadFiles(picker.files);
     picker.value = "";
 });
 window.addEventListener("dragover", (e) => e.preventDefault());
 window.addEventListener("drop", (e) => {
     e.preventDefault();
-    if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files);
 });
 
 startLoop(engine, document.getElementById("screen"), getInput);

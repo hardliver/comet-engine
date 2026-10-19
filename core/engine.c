@@ -4,6 +4,7 @@
 #include "engine.h"
 #include "gfx.h"
 #include "map.h"
+#include "pak.h"
 #include "replay.h"
 #include "save.h"
 #include "system.h"
@@ -43,6 +44,14 @@ static int load(const char *src, size_t len, int is_system)
     // 先算遊戲的指紋，讓重播檢查是不是同一個遊戲（不是就不載入）
     uint8_t sha[32];
     sha256(src, len, sha);
+    // 有資源包：指紋再加上資源包的內容指紋（資源包換了，舊的重播就對不上）
+    if (pak_sha() != NULL) {
+        Sha256 s;
+        sha256_init(&s);
+        sha256_update(&s, sha, 32);
+        sha256_update(&s, pak_sha(), 32);
+        sha256_final(&s, sha);
+    }
     if (replay_on_load(sha)) return 2;
     memcpy(cart_sha, sha, 32);
     save_on_load(src, len);   // 遊戲的 id：存檔放在哪裡
@@ -52,6 +61,7 @@ static int load(const char *src, size_t len, int is_system)
     script_set_seed(seed);
     gfx_reset();   // 上一款遊戲的調色盤、相機、圖片、字型都清掉
     map_reset();   // 地圖也是
+    pak_reset();   // 角色動畫也是
     // "=game"：錯誤訊息裡的檔名，例如 "game:12: attempt to call a nil value"
     return script_load(src, len, "=game", is_system);
 }
