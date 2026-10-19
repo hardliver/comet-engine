@@ -3,7 +3,6 @@
 // 讀資料都經過 pak_read()：現在是從記憶體複製，之後 Pico 版改成從 SD 卡讀，
 // 只要改這一個函式，其他地方都不用動。
 
-#include <stdlib.h>
 #include <string.h>
 
 #include "lua.h"
@@ -23,9 +22,9 @@ static const uint8_t *pak = NULL;   // 平台交給我們的整個檔案
 static size_t pak_len = 0;
 static uint32_t pak_count = 0;      // 幾個項目
 
-// 一組載入的角色動畫：整個項目複製一份（Lua 換遊戲時、或 sprfree 時釋放）
+// 一組載入的角色動畫：直接指向資源包裡的資料（不複製）
 typedef struct {
-    uint8_t *data;        // NULL = 這個位置是空的
+    const uint8_t *data;  // NULL = 這個位置是空的
     uint32_t size;
     int frames;
 } SpriteSet;
@@ -117,10 +116,7 @@ const uint8_t *pak_sha(void)
 
 void pak_reset(void)
 {
-    for (int i = 1; i <= PAK_MAX_SPRITES; i++) {
-        free(sprites[i].data);
-        sprites[i].data = NULL;
-    }
+    for (int i = 1; i <= PAK_MAX_SPRITES; i++) sprites[i].data = NULL;
 }
 
 // ============================================================
@@ -204,8 +200,9 @@ static const char *check_sprites(const uint8_t *d, uint32_t size, int *frames)
     if (n < 1 || 2 + (uint32_t)n * 12 > size) return "bad sprite set header";
     for (int f = 0; f < n; f++) {
         const uint8_t *t = d + 2 + f * 12;
-        uint32_t w = (uint32_t)u16(t), h = (uint32_t)u16(t + 2), off = u32(t + 8);
-        if (w == 0 || h == 0 || (uint64_t)off + (uint64_t)w * h > size) return "sprite frame outside the entry";
+        int w = u16(t), h = u16(t + 2);
+        uint32_t off = u32(t + 8);
+        if (off >= size || gfx_sprite_check(d + off, size - off, w, h)) return "bad sprite frame data";
     }
     *frames = n;
     return NULL;
@@ -298,15 +295,10 @@ static int l_sprload(lua_State *L)
         if (sprites[i].data == NULL) { slot = i; break; }
     }
     if (slot == 0) return luaL_error(L, "too many sprite sets (max %d, use sprfree)", PAK_MAX_SPRITES);
-    uint8_t *d = malloc(e.size);
-    if (d == NULL) return luaL_error(L, "out of memory loading '%s'", lua_tostring(L, 1));
-    pak_read(e.off, d, e.size);
+    const uint8_t *d = pak + e.off;   // 記憶體模式：直接用資源包裡的資料
     int frames = 0;
     const char *err = check_sprites(d, e.size, &frames);
-    if (err != NULL) {
-        free(d);
-        return luaL_error(L, "%s: %s", lua_tostring(L, 1), err);
-    }
+    if (err != NULL) return luaL_error(L, "%s: %s", lua_tostring(L, 1), err);
     sprites[slot].data = d;
     sprites[slot].size = e.size;
     sprites[slot].frames = frames;
@@ -314,11 +306,10 @@ static int l_sprload(lua_State *L)
     return 1;
 }
 
-// sprfree(h)：釋放一組角色動畫（離開這一區、不會再出現的敵人）
+// sprfree(h)：釋放一組角色動畫（離開這一區、不會再出現的敵人），空出編號
 static int l_sprfree(lua_State *L)
 {
     SpriteSet *s = get_set(L, 1);
-    free(s->data);
     s->data = NULL;
     return 0;
 }

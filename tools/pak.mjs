@@ -61,18 +61,47 @@ export function bgEntry(name, { palette, pixels, depth = null, w = 320, h = 240 
     return { name, type: PAK_BG, data: out.done() };
 }
 
+// 一格角色的像素（w×h，0 = 透明）→ 一列一列壓縮的格式（見 core/gfx.h 的 gfx_sprite_draw）：
+// h 個 u16（每一列的位置），每一列重複（透明幾點、有顏色幾點、那幾點的顏色）
+export function encodeSpriteRows(pixels, w, h) {
+    const rows = [];
+    for (let y = 0; y < h; y++) {
+        const out = [];
+        let x = 0;
+        while (x < w) {
+            let skip = 0;
+            while (x + skip < w && pixels[y * w + x + skip] === 0 && skip < 255) skip++;
+            let run = 0;
+            while (x + skip + run < w && pixels[y * w + x + skip + run] !== 0 && run < 255) run++;
+            out.push(skip, run);
+            for (let i = 0; i < run; i++) out.push(pixels[y * w + x + skip + i]);
+            x += skip + run;
+        }
+        rows.push(out);
+    }
+    const data = new Writer();
+    let off = h * 2;
+    for (const r of rows) { data.u16(off); off += r.length; }
+    if (off > 65535) throw new Error("sprite frame too large");
+    for (const r of rows) data.bytes(r);
+    return data.done();
+}
+
 // 角色動畫：frames = [{ w, h, ox, oy, pixels }]，pixels 是 w×h 個全域顏色編號（0 = 透明）
 export function spritesEntry(name, frames) {
     const head = 2 + frames.length * 12;
+    const enc = frames.map((f) => {
+        if (f.pixels.length !== f.w * f.h) throw new Error(`${name}: frame size mismatch`);
+        return encodeSpriteRows(f.pixels, f.w, f.h);
+    });
     const out = new Writer();
     out.u16(frames.length);
     let off = head;
-    for (const f of frames) {
-        if (f.pixels.length !== f.w * f.h) throw new Error(`${name}: frame size mismatch`);
+    frames.forEach((f, i) => {
         out.u16(f.w); out.u16(f.h); out.s16(f.ox); out.s16(f.oy); out.u32(off);
-        off += f.pixels.length;
-    }
-    for (const f of frames) out.bytes(f.pixels);
+        off += enc[i].length;
+    });
+    for (const e of enc) out.bytes(e);
     return { name, type: PAK_SPRITES, data: out.done() };
 }
 

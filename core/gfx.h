@@ -92,11 +92,18 @@ void gfx_bg_draw(void);
 // 背景在畫面 (x, y) 這一點的深度（公分，0 = 沒有遮擋物）；除錯和遊戲判斷用
 int gfx_bg_depth_at(int x, int y);
 
-// 畫一格角色：pixels 是 w × h 個顏色編號（0 透明），畫到 (dx, dy)，放大成 dw × dh。
-// flip_x：左右翻轉。depth：角色離鏡頭幾公分；背景那一點的遮擋物比角色近，就不畫那一點。
-// depth = 0 代表不做深度測試（介面、特效）
-void gfx_sprite_draw(const uint8_t *pixels, int w, int h,
+// 畫一格角色。data 是「一列一列壓縮」的格式（資源包的角色動畫用，見 pak.h）：
+//   開頭 h 個 u16：每一列的資料從哪裡開始（從 data 算起）
+//   每一列：重複（透明幾點 u8、接著有顏色的幾點 u8、那幾點的顏色編號），直到湊滿 w 點
+// 角色周圍大多是透明的，這樣存大約只要一半的空間。
+// 畫到 (dx, dy)，放大成 dw × dh；flip_x：左右翻轉。
+// depth：角色離鏡頭幾公分；背景那一點的遮擋物比角色近，就不畫那一點。0 = 不做深度測試（介面、特效）
+#define SPRITE_MAX_W 1024
+void gfx_sprite_draw(const uint8_t *data, int w, int h,
                      int dx, int dy, int dw, int dh, int flip_x, int depth);
+
+// 檢查一格壓縮的角色資料是否完整（size：這格資料最多幾 bytes）。正確回傳 0
+int gfx_sprite_check(const uint8_t *data, uint32_t size, int w, int h);
 
 // ---- 文字 ----
 // 字型資料的格式和 fonts/c11.bin 相同（見 tools/font/c11_convert.py）：

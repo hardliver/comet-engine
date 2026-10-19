@@ -301,10 +301,46 @@ int gfx_bg_depth_at(int x, int y)
     return depth_at_bg(x + cam_x, y + cam_y);
 }
 
-void gfx_sprite_draw(const uint8_t *pixels, int w, int h,
+// 解開第 ty 列到 out（w 點）。資料在載入時檢查過（gfx_sprite_check），這裡不再檢查
+static void sprite_row(const uint8_t *data, int ty, int w, uint8_t *out)
+{
+    const uint8_t *p = data + (data[ty * 2] | (data[ty * 2 + 1] << 8));
+    int x = 0;
+    while (x < w) {
+        int skip = p[0], run = p[1];
+        p += 2;
+        memset(out + x, 0, (size_t)skip);
+        x += skip;
+        memcpy(out + x, p, (size_t)run);
+        p += run;
+        x += run;
+    }
+}
+
+int gfx_sprite_check(const uint8_t *data, uint32_t size, int w, int h)
+{
+    if (w <= 0 || h <= 0 || w > SPRITE_MAX_W || (uint32_t)h * 2 > size) return 1;
+    for (int y = 0; y < h; y++) {
+        uint32_t off = (uint32_t)(data[y * 2] | (data[y * 2 + 1] << 8));
+        int x = 0;
+        while (x < w) {
+            if (off + 2 > size) return 1;
+            int skip = data[off], run = data[off + 1];
+            off += 2;
+            // 每一段至少要往前走一點，否則壞掉的資料會讓迴圈停不下來
+            if (skip + run == 0 || x + skip + run > w || off + (uint32_t)run > size) return 1;
+            x += skip + run;
+            off += (uint32_t)run;
+        }
+    }
+    return 0;
+}
+
+void gfx_sprite_draw(const uint8_t *data, int w, int h,
                      int dx, int dy, int dw, int dh, int flip_x, int depth)
 {
-    if (pixels == NULL || w <= 0 || h <= 0 || dw <= 0 || dh <= 0) return;
+    static uint8_t row[SPRITE_MAX_W];   // 解開的一列（static：Pico 的堆疊很小）
+    if (data == NULL || w <= 0 || h <= 0 || w > SPRITE_MAX_W || dw <= 0 || dh <= 0) return;
     // 深度測試只看背景的深度圖：背景的遮擋物（柱子、桌子、門框）比角色近，就被擋住。
     // 角色之間誰擋誰，由遊戲照遠到近的順序畫（後畫的蓋掉先畫的）
     int test = depth > 0 && bg_depth != NULL && bg_loaded;
@@ -316,10 +352,15 @@ void gfx_sprite_draw(const uint8_t *pixels, int w, int h,
     int bx0 = dx, by0 = dy;
     dx -= cam_x;
     dy -= cam_y;
+    int last_ty = -1;
     for (int y = 0; y < dh; y++) {
         int py = dy + y;
         if (py < 0 || py >= SCREEN_H) continue;
-        const uint8_t *row = pixels + (y * h / dh) * w;
+        int ty = y * h / dh;
+        if (ty != last_ty) {                // 放大時好幾列對到同一列，只解一次
+            sprite_row(data, ty, w, row);
+            last_ty = ty;
+        }
         int by = by0 + y;
         const uint8_t *drow = (test && by >= 0 && by < SCREEN_H) ? bg_depth + (by >> 1) * BG_DEPTH_W : NULL;
         for (int x = 0; x < dw; x++) {
