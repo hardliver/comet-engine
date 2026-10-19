@@ -7,6 +7,9 @@
 //   ./build/mac [遊戲檔] [輸出圖檔]                    用預先寫好的按鍵跑 90 幀
 //   ./build/mac [遊戲檔] [輸出圖檔] --record 檔.rep     同上，並把輸入錄成重播檔
 //   ./build/mac [遊戲檔] [輸出圖檔] --replay 檔.rep     播放重播檔，檢查最後的畫面是否一致
+//   加上 --input 按鍵腳本.txt：用腳本裡的按鍵代替預先寫好的按鍵，跑完整個腳本
+//     （一行一段：「幀數 按鍵…」，按鍵名稱 L R U D A B START SELECT X Y LB RB，# 後面是註解）
+//   加上 --shots 幀,幀,…：在這幾幀結束時另外存圖（輸出圖檔名加上 _幀數）
 //   加上 --pak 檔.pak：遊戲的資源包（背景、角色動畫，見 core/pak.h）
 //   加上 --saves 資料夾：存檔寫在那個資料夾（檔名「id.欄位.sav」，id 的 / 換成 _）。
 //   沒加就只存在記憶體裡，程式結束就沒了（測試時不會留下檔案）
@@ -158,6 +161,83 @@ static int write_file(const char *path, const void *data, size_t len)
 // 第 60–89 幀：按住 A，左搖桿推向右上 (50, -90)，右搖桿推向左 (-127, 0)
 #define SCRIPTED_FRAMES 90
 
+// ---- 按鍵腳本（--input）----
+// 每一段：幾幀、按哪些鍵。讀進來之後展開成「第幾幀按什麼」
+#define MAX_SEGMENTS 4096
+static int seg_frames[MAX_SEGMENTS];
+static uint16_t seg_keys[MAX_SEGMENTS];
+static int nseg = 0;
+
+static int key_code(const char *name)
+{
+    static const char *names[] = { "L", "R", "U", "D", "A", "B", "START", "SELECT", "X", "Y", "LB", "RB" };
+    for (int i = 0; i < 12; i++) {
+        if (strcmp(name, names[i]) == 0) return i;
+    }
+    return -1;
+}
+
+// 讀按鍵腳本，回傳總幀數；格式錯誤回傳 -1
+static int load_input_script(const char *path)
+{
+    size_t len = 0;
+    char *src = read_file(path, &len);
+    if (src == NULL) {
+        printf("讀不到按鍵腳本 %s\n", path);
+        return -1;
+    }
+    int total = 0;
+    size_t pos = 0;
+    int line_no = 0;
+    while (pos < len) {
+        char line[256];
+        size_t n = 0;
+        while (pos < len && src[pos] != '\n') {
+            if (n < sizeof(line) - 1) line[n++] = src[pos];
+            pos++;
+        }
+        pos++;
+        line[n] = '\0';
+        line_no++;
+        char *hash = strchr(line, '#');
+        if (hash) *hash = '\0';
+        char *tok = strtok(line, " \t\r");
+        if (tok == NULL) continue;           // 空白行
+        int frames = atoi(tok);
+        uint16_t keys = 0;
+        while ((tok = strtok(NULL, " \t\r")) != NULL) {
+            int k = key_code(tok);
+            if (k < 0) {
+                printf("%s 第 %d 行：不認得的按鍵 %s\n", path, line_no, tok);
+                free(src);
+                return -1;
+            }
+            keys |= (uint16_t)(1 << k);
+        }
+        if (frames <= 0 || nseg >= MAX_SEGMENTS) {
+            printf("%s 第 %d 行：幀數不對，或段數太多\n", path, line_no);
+            free(src);
+            return -1;
+        }
+        seg_frames[nseg] = frames;
+        seg_keys[nseg] = keys;
+        nseg++;
+        total += frames;
+    }
+    free(src);
+    return total;
+}
+
+// 第 i 幀要按的鍵
+static uint16_t script_keys(int i)
+{
+    for (int s = 0; s < nseg; s++) {
+        if (i < seg_frames[s]) return seg_keys[s];
+        i -= seg_frames[s];
+    }
+    return 0;
+}
+
 static void scripted_input(int i)
 {
     uint16_t keys = 0;
@@ -256,6 +336,7 @@ int main(int argc, char **argv)
 {
     // 先挑出 --record／--replay，剩下的依序是遊戲檔、輸出圖檔
     const char *record_path = NULL, *replay_path = NULL, *pak_path = NULL;
+    const char *input_path = NULL, *shots = NULL;
     int system_mode = 0;
     const char *game_ids[MAX_GAME_ARGS], *game_paths[MAX_GAME_ARGS];
     int ngames = 0;
@@ -266,6 +347,10 @@ int main(int argc, char **argv)
             record_path = argv[++i];
         } else if (strcmp(argv[i], "--replay") == 0 && i + 1 < argc) {
             replay_path = argv[++i];
+        } else if (strcmp(argv[i], "--input") == 0 && i + 1 < argc) {
+            input_path = argv[++i];
+        } else if (strcmp(argv[i], "--shots") == 0 && i + 1 < argc) {
+            shots = argv[++i];
         } else if (strcmp(argv[i], "--pak") == 0 && i + 1 < argc) {
             pak_path = argv[++i];
         } else if (strcmp(argv[i], "--saves") == 0 && i + 1 < argc) {
@@ -351,9 +436,36 @@ int main(int argc, char **argv)
         return same ? 0 : 3;
     }
 
-    for (int i = 0; i < SCRIPTED_FRAMES; i++) {
-        scripted_input(i);
+    int frames = SCRIPTED_FRAMES;
+    if (input_path != NULL) {
+        frames = load_input_script(input_path);
+        if (frames < 0) return 1;
+    }
+    for (int i = 0; i < frames; i++) {
+        if (input_path != NULL) {
+            input_set(0, script_keys(i));
+            input_set_stick(0, STICK_LEFT, 0, 0);
+            input_set_stick(0, STICK_RIGHT, 0, 0);
+        } else {
+            scripted_input(i);
+        }
         engine_frame();
+        // --shots：這一幀要不要另外存圖（逗號分隔的幀數，幀數從 1 算：跑完第 N 幀）
+        if (shots != NULL) {
+            const char *p = shots;
+            while (*p) {
+                if (atoi(p) == i + 1) {
+                    char shot[512];
+                    const char *dot = strrchr(out, '.');
+                    int base = dot ? (int)(dot - out) : (int)strlen(out);
+                    snprintf(shot, sizeof(shot), "%.*s_%d.ppm", base, out, i + 1);
+                    if (save_ppm(shot) != 0) return 1;
+                }
+                p = strchr(p, ',');
+                if (p == NULL) break;
+                p++;
+            }
+        }
     }
 
     if (save_ppm(out) != 0) {
