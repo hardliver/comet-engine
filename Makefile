@@ -45,7 +45,7 @@ web: $(SHARED) $(HEADERS) $(wildcard platform/web/*) $(wildcard games/*.lua) doc
 		-sERROR_ON_UNDEFINED_SYMBOLS=0 -sWARN_ON_UNDEFINED_SYMBOLS=1 \
 		-sEXPORTED_FUNCTIONS=$(WEB_EXPORTS)
 	mkdir -p build/web/vendor build/web/games build/web/fonts
-	cp platform/web/*.html platform/web/*.js platform/web/*.webmanifest build/web/
+	cp platform/web/*.html platform/web/*.js platform/web/*.css platform/web/*.webmanifest build/web/
 	cp platform/web/vendor/*.js build/web/vendor/
 	cp docs/AI_GUIDE.md build/web/
 	cp fonts/c11.bin build/web/fonts/
