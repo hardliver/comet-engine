@@ -5,6 +5,7 @@
 #include "gfx.h"
 #include "map.h"
 #include "replay.h"
+#include "save.h"
 #include "script.h"
 #include "sha256.h"
 
@@ -43,6 +44,7 @@ int engine_load(const char *src, size_t len)
     sha256(src, len, sha);
     if (replay_on_load(sha)) return 2;
     memcpy(cart_sha, sha, 32);
+    save_on_load(src, len);   // 遊戲的 id：存檔放在哪裡
 
     frame_count = 0;
     script_set_seed(seed);

@@ -7,6 +7,8 @@
 //   ./build/mac [遊戲檔] [輸出圖檔]                    用預先寫好的按鍵跑 90 幀
 //   ./build/mac [遊戲檔] [輸出圖檔] --record 檔.rep     同上，並把輸入錄成重播檔
 //   ./build/mac [遊戲檔] [輸出圖檔] --replay 檔.rep     播放重播檔，檢查最後的畫面是否一致
+//   加上 --saves 資料夾：存檔寫在那個資料夾（檔名「id.欄位.sav」，id 的 / 換成 _）。
+//   沒加就只存在記憶體裡，程式結束就沒了（測試時不會留下檔案）
 // 沒給遊戲檔、圖檔就用 games/move_box.lua、out.ppm
 //
 // --replay 的結束代碼：0 = 一致，3 = 畫面不同，1 = 其他錯誤。
@@ -20,6 +22,7 @@
 #include "../../core/input.h"
 #include "../../core/platform.h"
 #include "../../core/replay.h"
+#include "../../core/save.h"
 
 // 核心要求平台提供的功能：印出一行訊息
 void platform_log(const char *msg)
@@ -46,6 +49,68 @@ static char *read_file(const char *path, size_t *len)
     *len = fread(buf, 1, (size_t)size, f);
     fclose(f);
     return buf;
+}
+
+// ---- 存檔 ----
+// 有 --saves 就存成檔案，否則存在記憶體裡（只在這次執行有效）
+static const char *save_dir = NULL;
+static unsigned char *mem_save[SAVE_SLOTS];
+static int mem_len[SAVE_SLOTS] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+
+// 存檔的檔名：資料夾/id.欄位.sav（"hardliver/wildkin" → "hardliver_wildkin.1.sav"）
+static void save_path(char *out, size_t size, const char *game_id, int slot)
+{
+    char id[64];
+    snprintf(id, sizeof(id), "%s", game_id);
+    for (char *c = id; *c; c++) {
+        if (*c == '/') *c = '_';
+    }
+    snprintf(out, size, "%s/%s.%d.sav", save_dir, id, slot);
+}
+
+int platform_save_read(const char *game_id, int slot, unsigned char *buf, int cap)
+{
+    if (save_dir == NULL) {
+        if (mem_len[slot] < 0 || mem_len[slot] > cap) return -1;
+        memcpy(buf, mem_save[slot], (size_t)mem_len[slot]);
+        return mem_len[slot];
+    }
+    char path[512];
+    save_path(path, sizeof(path), game_id, slot);
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) return -1;   // 沒有存檔
+    int n = (int)fread(buf, 1, (size_t)cap, f);
+    fclose(f);
+    return n;
+}
+
+int platform_save_write(const char *game_id, int slot, const unsigned char *data, int len)
+{
+    if (save_dir == NULL) {
+        free(mem_save[slot]);
+        mem_save[slot] = NULL;
+        mem_len[slot] = -1;
+        if (data == NULL) return 0;
+        mem_save[slot] = malloc((size_t)len);
+        if (mem_save[slot] == NULL) return 1;
+        memcpy(mem_save[slot], data, (size_t)len);
+        mem_len[slot] = len;
+        return 0;
+    }
+    char path[512];
+    save_path(path, sizeof(path), game_id, slot);
+    if (data == NULL) {
+        remove(path);
+        return 0;
+    }
+    // 先寫到暫存檔再改名：寫到一半當機（或斷電），舊的存檔還在
+    char tmp[520];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    FILE *f = fopen(tmp, "wb");
+    if (f == NULL) return 1;
+    size_t n = fwrite(data, 1, (size_t)len, f);
+    if (fclose(f) != 0 || n != (size_t)len) return 1;
+    return rename(tmp, path) != 0;
 }
 
 static int save_ppm(const char *path)
@@ -116,6 +181,8 @@ int main(int argc, char **argv)
             record_path = argv[++i];
         } else if (strcmp(argv[i], "--replay") == 0 && i + 1 < argc) {
             replay_path = argv[++i];
+        } else if (strcmp(argv[i], "--saves") == 0 && i + 1 < argc) {
+            save_dir = argv[++i];
         } else if (npos < 2) {
             positional[npos++] = argv[i];
         }
@@ -147,6 +214,11 @@ int main(int argc, char **argv)
         }
     }
 
+    // 錄影：要在載入遊戲「之前」開始，_init 裡讀的存檔才會記進去
+    if (record_path != NULL) {
+        replay_record_begin();
+    }
+
     int err = engine_load(src, len);
     free(src);
     if (err) {
@@ -170,9 +242,6 @@ int main(int argc, char **argv)
         return same ? 0 : 3;
     }
 
-    if (record_path != NULL) {
-        replay_record_begin();
-    }
     for (int i = 0; i < SCRIPTED_FRAMES; i++) {
         scripted_input(i);
         engine_frame();

@@ -8,7 +8,8 @@
 //      分享精彩片段、檢查網頁版和主機結果一致。
 //
 // ---- 錄影（平台用）----
-//   engine_set_seed(種子); engine_load(遊戲); replay_record_begin();
+//   engine_set_seed(種子); replay_record_begin(); engine_load(遊戲);
+//   （先開始錄影再載入：遊戲在 _init 裡讀存檔，也要記下來）
 //   …每一幀 engine_frame() 時，引擎自動記下輸入…
 //   replay_snapshot(); replay_snapshot_size();   到目前為止的重播檔（錄影繼續）
 //
@@ -33,9 +34,17 @@
 //   事件：
 //     幀數差（varint：距離上一個事件幾幀）
 //     1 byte：bit 0–1 玩家、bit 2 有按鍵、bit 3 有左搖桿、bit 4 有右搖桿、
-//             bit 5–7 事件種類（0 = 輸入；其他保留給之後，例如讀入存檔）
+//             bit 5–7 事件種類（0 = 輸入、1 = 讀存檔、其他保留）
+//
+//   種類 0（輸入）：
 //     按鍵 2 bytes／左搖桿 x、y 各 1 byte／右搖桿 x、y 各 1 byte（有才寫）
-//   只在輸入「有變化」時才寫事件，按住不放不佔空間。
+//     只在輸入「有變化」時才寫事件，按住不放不佔空間。
+//   種類 1（讀存檔：遊戲呼叫 loadsave 時讀到了什麼）：
+//     開頭 byte 的 bit 0–2 是欄位（0–7）
+//     varint：長度 + 1（0 代表「沒有存檔」）
+//     存檔的 bytes
+//   同一幀裡，輸入事件在前（幀開始時記），讀存檔事件在後（遊戲執行中才發生）。
+//   在 _init 裡讀的存檔算第 0 幀。
 
 #ifndef REPLAY_H
 #define REPLAY_H
@@ -51,11 +60,13 @@ enum {
     REPLAY_RECORDING = 1,
     REPLAY_PLAYING   = 2,
     REPLAY_FINISHED  = 3,   // 播完了（輸入已還給平台）
+    REPLAY_ARMED     = 4,   // 已呼叫 replay_record_begin，等 engine_load 載入遊戲後開始錄
 };
 
 // ---- 平台用 ----
 
-// 開始錄影：在 engine_load() 之後、第一次 engine_frame() 之前呼叫。成功回傳 0
+// 開始錄影：在 engine_set_seed() 之後、engine_load() 之前呼叫。成功回傳 0。
+// 載入成功後才真的開始錄（要先知道遊戲指紋）；載入失敗時呼叫 replay_stop()
 int replay_record_begin(void);
 
 // 到目前為止的重播檔。錄影會繼續，之後可以再取一次（更長的版本）。
@@ -84,5 +95,13 @@ int replay_on_load(const uint8_t cart_sha[32]);
 void replay_before_frame(uint32_t frame);
 // 每一幀執行完之後：檢查是否播完
 void replay_after_frame(uint32_t frames_done);
+
+// 遊戲讀存檔時（save.c 呼叫）。len = -1 代表沒有存檔
+// 錄影中：記下讀到的內容
+void replay_record_save(uint32_t frame, int slot, const uint8_t *data, int len);
+// 播放中：從重播檔取出這次讀到的內容，回傳長度（-1 = 沒有存檔）。
+// 重播檔裡下一個事件不是「這一幀、這個欄位的讀存檔」，代表遊戲跑得和錄影時不一樣：
+// 停止播放，回傳 -2
+int replay_play_save(uint32_t frame, int slot, uint8_t *buf, int cap);
 
 #endif

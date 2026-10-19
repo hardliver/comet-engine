@@ -20,6 +20,8 @@
 #define EV_RSTICK      0x10
 #define EV_TYPE_SHIFT  5
 #define EV_TYPE_INPUT  0
+#define EV_TYPE_SAVE   1
+#define EV_SLOT_MASK   0x07   // 讀存檔事件：bit 0–2 是欄位
 
 // 一位玩家一幀的輸入
 typedef struct {
@@ -125,14 +127,20 @@ int replay_record_begin(void)
     release();
     state = REPLAY_OFF;
     if (reserve(REPLAY_HEADER_SIZE)) return 1;
+    // 檔頭要用到遊戲指紋，等 engine_load() 呼叫 replay_on_load() 時才寫
+    state = REPLAY_ARMED;
+    return 0;
+}
 
-    // 先寫好檔頭；總幀數和最後畫面的指紋在 replay_snapshot() 時才填
+// 載入遊戲時真正開始錄：寫好檔頭。總幀數和最後畫面的指紋在 replay_snapshot() 時才填
+static void record_start(const uint8_t cart_sha[32])
+{
     memset(buf, 0, REPLAY_HEADER_SIZE);
     memcpy(buf, "CRPL", 4);
     put_u16(buf + 4, REPLAY_VERSION);
     put_u16(buf + 6, REPLAY_HEADER_SIZE);
     put_u32(buf + 8, engine_seed());
-    memcpy(buf + 16, engine_cart_sha(), 32);
+    memcpy(buf + 16, cart_sha, 32);
     // buf + 48：起始狀態，全部 0 = 從新遊戲開始
     buf_len = REPLAY_HEADER_SIZE;
 
@@ -140,7 +148,6 @@ int replay_record_begin(void)
     memset(pads, 0, sizeof(pads));
     last_event_frame = 0;
     state = REPLAY_RECORDING;
-    return 0;
 }
 
 // 記下一位玩家這一幀的輸入；和上次記的一樣就不寫
@@ -242,6 +249,10 @@ int replay_play_begin(const uint8_t *data, size_t len)
 
 int replay_on_load(const uint8_t cart_sha[32])
 {
+    if (state == REPLAY_ARMED) {
+        record_start(cart_sha);
+        return 0;
+    }
     if (state == REPLAY_RECORDING || state == REPLAY_FINISHED) {
         replay_stop();        // 換了遊戲（或重新開始），之前的錄影／播放結果作廢
         return 0;
@@ -254,6 +265,12 @@ int replay_on_load(const uint8_t cart_sha[32])
     }
     if (total_frames == 0) state = REPLAY_FINISHED;
     return 0;
+}
+
+// 下一個事件的種類（peek_next_event 之後，read_pos 指在事件開頭那 1 byte）
+static int next_type(void)
+{
+    return read_pos < buf_len ? buf[read_pos] >> EV_TYPE_SHIFT : -1;
 }
 
 // 套用一個事件。格式不對回傳 1
@@ -281,8 +298,16 @@ void replay_before_frame(uint32_t frame)
     }
     if (state != REPLAY_PLAYING) return;
 
-    // 這一幀的事件全部套用（同一幀可能有好幾位玩家的事件，幀數差是 0）
-    while (next_event_frame == frame) {
+    // 上一幀還有沒用掉的事件：錄影時遊戲在那一幀讀了存檔，這次卻沒讀
+    if (next_event_frame < frame) {
+        platform_log("重播和遊戲對不上（讀存檔的次數不同），停止播放");
+        replay_stop();
+        return;
+    }
+
+    // 這一幀的輸入事件全部套用（同一幀可能有好幾位玩家的事件，幀數差是 0）。
+    // 遇到讀存檔事件就停：那要等遊戲執行到 loadsave 時才用
+    while (next_event_frame == frame && next_type() == EV_TYPE_INPUT) {
         if (apply_event()) {
             platform_log("重播檔損壞，停止播放");
             replay_stop();
@@ -306,6 +331,55 @@ void replay_after_frame(uint32_t frames_done)
     screen_sha(sha);
     matched = memcmp(sha, buf + 80, 32) == 0;
     state = REPLAY_FINISHED;
+}
+
+// ============================================================
+// 讀存檔
+// ============================================================
+
+void replay_record_save(uint32_t frame, int slot, const uint8_t *data, int len)
+{
+    if (state != REPLAY_RECORDING) return;
+    // 最多 5（幀數差）+ 1 + 5（長度）+ 存檔
+    if (reserve(11 + (size_t)(len > 0 ? len : 0))) {
+        platform_log("重播檔太大，停止錄影");
+        state = REPLAY_OFF;
+        return;
+    }
+    put_varint(frame - last_event_frame);
+    put_byte((uint8_t)((slot & EV_SLOT_MASK) | (EV_TYPE_SAVE << EV_TYPE_SHIFT)));
+    put_varint((uint32_t)(len + 1));   // -1（沒有存檔）→ 0
+    if (len > 0) {
+        memcpy(buf + buf_len, data, (size_t)len);
+        buf_len += (size_t)len;
+    }
+    last_event_frame = frame;
+}
+
+int replay_play_save(uint32_t frame, int slot, uint8_t *out, int cap)
+{
+    // 下一個事件必須是「這一幀、這個欄位」的讀存檔
+    if (next_event_frame != frame || next_type() != EV_TYPE_SAVE ||
+        (buf[read_pos] & EV_SLOT_MASK) != slot) {
+        platform_log("重播和遊戲對不上（讀存檔的時間或欄位不同），停止播放");
+        replay_stop();
+        return -2;
+    }
+    read_pos++;
+    uint32_t n1;
+    if (get_varint(&n1) || n1 > (uint32_t)cap + 1 || read_pos + (n1 ? n1 - 1 : 0) > buf_len) {
+        platform_log("重播檔損壞，停止播放");
+        replay_stop();
+        return -2;
+    }
+    int len = (int)n1 - 1;
+    if (len > 0) {
+        memcpy(out, buf + read_pos, (size_t)len);
+        read_pos += (size_t)len;
+    }
+    last_event_frame = frame;
+    peek_next_event();
+    return len;
 }
 
 // ============================================================

@@ -17,6 +17,7 @@
 #include "map.h"
 #include "input.h"
 #include "platform.h"
+#include "save.h"
 
 static lua_State *L = NULL;   // 目前這款遊戲的 Lua 執行環境
 static int failed = 0;
@@ -432,6 +433,7 @@ static void open_libs(lua_State *L)
     lua_pushglobaltable(L);
     luaL_setfuncs(L, api, 0);
     lua_pop(L, 1);
+    save_open_lua(L);   // save、loadsave（在 save.c）
 
     // 畫面大小也給遊戲用
     lua_pushinteger(L, SCREEN_W); lua_setglobal(L, "SCREEN_W");

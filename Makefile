@@ -3,7 +3,7 @@
 #   make web     編譯網頁版到 build/web/
 #   make serve   在 http://localhost:8420 開啟網頁版（編輯器：/studio.html）
 #                （換埠號：make serve PORT=9000）
-#   make check   自動測試：網頁版與 Mac 版結果一致（含中文字、地圖、重播檔）、Lua 錯誤處理正常
+#   make check   自動測試：網頁版與 Mac 版結果一致（含中文字、地圖、重播檔、存檔）、Lua 錯誤處理正常
 #   make clean   清除編譯結果
 #
 # -Wall -Wextra：開啟警告，讓編譯器幫你抓可疑的寫法
@@ -11,7 +11,7 @@
 CFLAGS = -Wall -Wextra -std=c99 -O2
 
 # 核心
-CORE = core/gfx.c core/map.c core/input.c core/engine.c core/script.c core/sha256.c core/replay.c
+CORE = core/gfx.c core/map.c core/input.c core/engine.c core/script.c core/sha256.c core/replay.c core/save.c
 HEADERS = $(wildcard core/*.h)
 
 # Lua 5.4（third_party/lua，原始碼未修改）
@@ -65,12 +65,16 @@ build/text_test.lua: tests/text/comet.json tests/text/main.lua fonts/c11.bin pla
 build/map_test.lua: tests/map/comet.json tests/map/main.lua tests/map/maps/test.json tests/map/town.png tests/map/dungeon.png platform/web/cart.js
 	node tools/cart.mjs tests/map
 
-check: build/mac web build/text_test.lua build/map_test.lua
+check: build/mac web build/text_test.lua build/map_test.lua tests/save/main.lua
 	./build/mac
 	./build/mac games/move_box.lua build/record.ppm --record build/move_box.rep
 	./build/mac games/move_box.lua build/replay.ppm --replay build/move_box.rep
 	./build/mac build/text_test.lua build/text_test.ppm
 	./build/mac build/map_test.lua build/map_test.ppm
+	rm -rf build/saves && mkdir -p build/saves
+	./build/mac tests/save/main.lua build/save1.ppm --saves build/saves
+	./build/mac tests/save/main.lua build/save2.ppm --saves build/saves --record build/save.rep
+	./build/mac tests/save/main.lua build/save3.ppm --replay build/save.rep
 	node tools/check_web.mjs
 
 clean:

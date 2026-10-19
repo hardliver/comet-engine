@@ -13,6 +13,9 @@
 //         網頁版用同樣的按鍵錄出來的重播檔，和 Mac 版的逐 byte 相同；
 //         竄改過的重播檔會被發現（畫面不同）；不同的遊戲拒絕播放
 // 測試 8：遊戲指紋（engine_cart_sha）和 Node.js 內建的 SHA-256 相同
+// 測試 9：存檔（tests/save）。檢查方塊全綠；網頁版跑兩次（第二次讀到第一次的存檔），
+//         畫面和 Mac 版的 build/save1.ppm、save2.ppm 相同，存檔內容和 Mac 版的檔案逐 byte 相同；
+//         網頁版錄的重播檔和 Mac 版相同；播放 Mac 的重播檔時讀到的是重播檔裡的存檔，而且不會寫入
 
 import fs from "fs";
 import crypto from "crypto";
@@ -24,14 +27,30 @@ const BTN_RIGHT = 1, BTN_DOWN = 3, BTN_A = 4;
 let failures = 0;
 const logs = [];
 
-async function loadEngine() {
+// store：存檔放在哪裡（Map：「id:欄位」→ bytes）。不給就每次都是空的
+async function loadEngine(store = new Map()) {
     let engine = null;
+    const cstr = (ptr) => {
+        const mem = new Uint8Array(engine.memory.buffer);
+        let end = ptr;
+        while (mem[end] !== 0) end++;
+        return new TextDecoder().decode(mem.subarray(ptr, end));
+    };
     const env = new Proxy({
         js_log(ptr) {
-            const mem = new Uint8Array(engine.memory.buffer);
-            let end = ptr;
-            while (mem[end] !== 0) end++;
-            logs.push(new TextDecoder().decode(mem.subarray(ptr, end)));
+            logs.push(cstr(ptr));
+        },
+        js_save_read(idPtr, slot, buf, cap) {
+            const bytes = store.get(`${cstr(idPtr)}:${slot}`);
+            if (!bytes || bytes.length > cap) return -1;
+            new Uint8Array(engine.memory.buffer).set(bytes, buf);
+            return bytes.length;
+        },
+        js_save_write(idPtr, slot, data, len) {
+            const key = `${cstr(idPtr)}:${slot}`;
+            if (data === 0) store.delete(key);
+            else store.set(key, new Uint8Array(engine.memory.buffer, data, len).slice());
+            return 0;
         },
     }, { get: (t, name) => t[name] || (() => 0) });
     const wasi = new Proxy({}, { get: () => () => 8 });   // 8 = EBADF
@@ -234,8 +253,8 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
     // (2) 網頁版自己錄
     {
         const engine = await loadEngine();
-        load(engine, src);
         engine.replay_record_begin();
+        load(engine, src);
         for (let i = 0; i < 90; i++) { scriptedInput(engine, i); engine.engine_frame(); }
         const ptr = engine.replay_snapshot();
         const bytes = Buffer.from(new Uint8Array(engine.memory.buffer, ptr, engine.replay_snapshot_size()));
@@ -270,6 +289,64 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
     const node = crypto.createHash("sha256").update(src).digest("hex");
     if (ours === node) ok(name);
     else fail(name, `引擎 ${ours}，Node.js ${node}`);
+}
+
+// ---- 測試 9 ----
+{
+    const name = "存檔：存讀正確、跨平台相同、重播時從重播檔讀且不寫入";
+    const src = fs.readFileSync("tests/save/main.lua", "utf8");
+    const problems = [];
+    const macPPM = (f) => { const p = fs.readFileSync(f); return p.subarray(p.length - W * H * 3); };
+    const run = (engine) => { for (let i = 0; i < 90; i++) { scriptedInput(engine, i); engine.engine_frame(); } };
+    // 下方 12 個檢查方塊都是綠色、上方有 count 個黃色方塊
+    const looksRight = (rgb, count) => {
+        const px = (x, y) => { const i = (y * W + x) * 3; return [rgb[i], rgb[i + 1], rgb[i + 2]].join(","); };
+        for (let i = 0; i < 12; i++) if (px(4 + i * 8, 230) !== "0,228,54") return false;
+        for (let i = 0; i < count; i++) if (px(10 + i * 12, 10) !== px(10, 10) || px(10, 10) === px(0, 0)) return false;
+        return px(10 + count * 12, 10) === px(0, 0);
+    };
+    if (!looksRight(macPPM("build/save1.ppm"), 1)) problems.push("Mac 版第一次執行的檢查方塊不是全綠");
+
+    const store = new Map();
+    // (1) 第一次執行：沒有存檔
+    {
+        const engine = await loadEngine(store);
+        load(engine, src);
+        run(engine);
+        if (Buffer.compare(framebufferRGB(engine), macPPM("build/save1.ppm")) !== 0) problems.push("第一次執行的畫面和 Mac 版不同");
+    }
+    // (2) 第二次執行：讀到第一次的存檔（count = 2），同時錄影
+    {
+        const engine = await loadEngine(store);
+        engine.replay_record_begin();
+        load(engine, src);
+        run(engine);
+        const web = framebufferRGB(engine);
+        if (Buffer.compare(web, macPPM("build/save2.ppm")) !== 0) problems.push("第二次執行的畫面和 Mac 版不同");
+        if (!looksRight(web, 2)) problems.push("第二次執行沒有讀到第一次的存檔");
+        for (const slot of [1, 2]) {
+            const mac = fs.readFileSync(`build/saves/comet_save-test.${slot}.sav`);
+            const ours = store.get(`comet/save-test:${slot}`);
+            if (!ours || Buffer.compare(Buffer.from(ours), mac) !== 0) problems.push(`欄位 ${slot} 的存檔和 Mac 版不同`);
+        }
+        if (store.has("comet/save-test:3") || store.has("comet/save-test:4")) problems.push("刪除或出錯的欄位還留著");
+        const ptr = engine.replay_snapshot();
+        const rep = Buffer.from(new Uint8Array(engine.memory.buffer, ptr, engine.replay_snapshot_size()));
+        if (Buffer.compare(rep, fs.readFileSync("build/save.rep")) !== 0) problems.push("網頁版錄的重播檔和 Mac 版不同");
+    }
+    // (3) 播放 Mac 的重播檔，存檔是空的：要讀到重播檔裡的存檔（畫面 count = 2），而且不寫入
+    {
+        const empty = new Map();
+        const engine = await loadEngine(empty);
+        playBegin(engine, fs.readFileSync("build/save.rep"));
+        load(engine, src);
+        const st = runReplay(engine);
+        if (st !== 3 || engine.replay_matched() !== 1) problems.push(`播放結果：狀態 ${st}、一致 ${engine.replay_matched()}`);
+        if (!looksRight(framebufferRGB(engine), 2)) problems.push("播放時沒有讀到重播檔裡的存檔");
+        if (empty.size !== 0) problems.push("播放重播時寫入了存檔");
+    }
+    if (problems.length === 0) ok(name);
+    else fail(name, problems.join("；"));
 }
 
 process.exit(failures ? 1 : 0);

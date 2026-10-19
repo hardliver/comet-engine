@@ -136,11 +136,13 @@ function randomSeed() {
 function startGame(source, name) {
     engine.replayStop();
     engine.setSeed(randomSeed());
+    engine.recordBegin();   // 先開始錄再載入：遊戲在 _init 讀存檔也會記下來
     const err = engine.load(source);
-    if (!err) {
+    if (err) {
+        engine.replayStop();
+    } else {
         currentSource = source;
         currentName = name;
-        engine.recordBegin();
     }
     return err;
 }
