@@ -145,7 +145,10 @@ export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log
             pakPtr = 0;
             if (!bytes) return 0;
             pakPtr = exports.malloc(bytes.length);
-            if (!pakPtr) return 1;
+            if (!pakPtr) {
+                onLog(`資源包太大，記憶體不夠（${(bytes.length / 1048576).toFixed(1)} MB）。請用新版的 comet.wasm（make web）`);
+                return 1;
+            }
             new Uint8Array(exports.memory.buffer).set(bytes, pakPtr);
             return exports.pak_set(pakPtr, bytes.length);
         },

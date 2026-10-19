@@ -445,6 +445,10 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
     const problems = [];
     try {
         const engine = await loadEngine();
+        // 大遊戲的資源包有幾十 MB：wasm 的記憶體要能長大（Makefile 的 ALLOW_MEMORY_GROWTH）
+        const big = engine.malloc(40 * 1024 * 1024);
+        if (!big) problems.push("配置 40 MB 失敗：wasm 的記憶體不會長大");
+        else engine.free(big);
         const pak = fs.readFileSync("build/pak_test.pak");
         // 資源包的記憶體由平台保管，遊戲執行期間不能 free
         const pp = engine.malloc(pak.length);

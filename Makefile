@@ -36,12 +36,15 @@ build/mac: $(SHARED) $(HEADERS) platform/mac/main.c
 # STANDALONE_WASM：只產生 .wasm，不產生 emscripten 的 JS 膠水程式
 # SUPPORT_LONGJMP=wasm：Lua 處理錯誤時會「跳回」pcall 的位置（setjmp/longjmp），
 #                       用 WebAssembly 內建的例外處理來做，不需要 JavaScript 幫忙
+# ALLOW_MEMORY_GROWTH：記憶體不夠時自動變大（預設固定 16 MB；大遊戲的資源包放不下）。
+#                       JavaScript 每次都重新取 memory.buffer，所以記憶體換一塊也沒關係
 # ERROR_ON_UNDEFINED_SYMBOLS=0：js_log 由 JavaScript 提供，C 裡找不到是正常的。
 #                       其他找不到的函式仍會列出警告，要看一下是不是打錯字
 web: $(SHARED) $(HEADERS) $(wildcard platform/web/*) $(wildcard games/*.lua) docs/AI_GUIDE.md fonts/c11.bin
 	mkdir -p build/web
 	emcc $(CFLAGS) $(LUA_FLAGS) $(SHARED) platform/web/web.c -o build/web/comet.wasm \
 		--no-entry -sSTANDALONE_WASM -sSUPPORT_LONGJMP=wasm \
+		-sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=1gb \
 		-sERROR_ON_UNDEFINED_SYMBOLS=0 -sWARN_ON_UNDEFINED_SYMBOLS=1 \
 		-sEXPORTED_FUNCTIONS=$(WEB_EXPORTS)
 	mkdir -p build/web/vendor build/web/games build/web/fonts
