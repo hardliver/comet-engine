@@ -24,10 +24,14 @@
 //          遊戲指紋 = SHA-256(遊戲檔指紋 + 資源包內容指紋)
 // 測試 12：資料檔（tests/data）。comet.json 的 data 合併成 DATA 表格：檢查方塊全綠、
 //          和 Mac 版的 build/data_test.ppm 逐像素相同；小數、null、壞掉的 JSON 會清楚地報錯
+// 測試 13：資料表編輯器（dataedit.js）的存檔格式。重新排版後內容不變、排兩次結果一樣、
+//          編號的順序照檔案（"10" 不會跑到 "01" 前面）；依檔案形狀選對畫面（表格、遭遇表、文字）；
+//          格子的輸入檢查（整數不能有小數、JSON 格式錯誤）
 
 import fs from "fs";
 import crypto from "crypto";
 import { buildData } from "../platform/web/cart.js";
+import { formatData, dataKind, parseCell, topKeys } from "../platform/web/dataedit.js";
 
 const WASM = "build/web/comet.wasm";
 const W = 320, H = 240;
@@ -520,6 +524,36 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
         if (!m2.includes("的 a 是 null")) problems.push(`null 的錯誤訊息：${m2}`);
         const m3 = await bad('{ "a": 1, }');
         if (!m3.includes("x.json")) problems.push(`壞掉的 JSON 的錯誤訊息：${m3}`);
+    } catch (e) {
+        problems.push(String(e));
+    }
+    if (problems.length === 0) ok(name);
+    else fail(name, problems.join("；"));
+}
+
+// ---- 測試 13 ----
+{
+    const name = "資料表編輯器：存檔格式、順序、畫面種類、輸入檢查";
+    const problems = [];
+    try {
+        const species = '{\n  "01": { "name": "芽", "base": { "hp": 45 }, "learn": [ [1, "a"] ] },\n' +
+                        '  "02": { "name": "林", "base": { "hp": 75 }, "learn": [] },\n  "10": { "name": "燈", "base": { "hp": 40 }, "learn": [] }\n}\n';
+        const d = JSON.parse(species);
+        const out = formatData(d, topKeys(species));
+        if (JSON.stringify(JSON.parse(out)) !== JSON.stringify(d)) problems.push("重新排版後內容變了");
+        if (formatData(JSON.parse(out), topKeys(out)) !== out) problems.push("排兩次結果不一樣");
+        if (topKeys(out).join(",") !== "01,02,10") problems.push(`順序亂了：${topKeys(out).join(",")}`);
+        if (out.split("\n").length !== 6) problems.push("不是一筆一行");
+        const enc = { route1: { rate: 20, list: [{ species: "07", min: 2, max: 4, weight: 50 }] } };
+        if (dataKind(d) !== "table") problems.push("野伴應該用表格");
+        if (dataKind(enc) !== "encounters") problems.push("遭遇表應該用遭遇表畫面");
+        if (dataKind({ names: { a: "甲" }, chart: { a: { b: 1 }, b: { a: 2 } } }) !== "text") problems.push("相剋表應該用文字");
+        if (dataKind({ lumber: "伐木" }) !== "text") problems.push("名稱對照表應該用文字");
+        if (!formatData(enc).includes('\n      { "species": "07"')) problems.push("遭遇表的 list 要一筆一行");
+        if (parseCell("12", 5).value !== 12) problems.push("整數");
+        if (parseCell("1.5", 5).ok) problems.push("小數應該被擋");
+        if (parseCell("[1,", [1]).ok) problems.push("壞掉的 JSON 應該被擋");
+        if (parseCell("[1]", { a: 1 }).ok) problems.push("型別不對（陣列填在表格欄）應該被擋");
     } catch (e) {
         problems.push(String(e));
     }

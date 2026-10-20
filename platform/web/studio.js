@@ -12,9 +12,10 @@ import {
 } from "./vendor/codemirror.js";
 import { createEngine, startLoop } from "./comet.js";
 import { setupKeyboard, readGamepad, merge } from "./input.js";
-import { buildCart, buildImages, buildMaps, buildData, dataFiles, imageEntries, imageFiles, mapFiles, mapLine, browserInflate, fontTextFiles, fontTextCode } from "./cart.js";
+import { buildCart, buildImages, buildMaps, buildData, dataFiles, dataEntries, imageEntries, imageFiles, mapFiles, mapLine, browserInflate, fontTextFiles, fontTextCode } from "./cart.js";
 import { createImageViewer } from "./imageview.js";
 import { createMapEditor, newMapText } from "./mapedit.js";
+import { createDataEditor } from "./dataedit.js";
 import { buildFont, fontSummary } from "./font.js";
 
 const STORAGE_KEY = "comet.studio.code";
@@ -332,6 +333,52 @@ async function mapChanged(text) {
     mapSaveTimer = setTimeout(saveMaps, 500);
 }
 
+// 資料表編輯器：點檔案分頁裡的資料檔（comet.json 的 data）時，取代左邊的程式碼編輯器
+const dataEditor = createDataEditor({ root: $("dataedit"), toast, onChange: dataChanged });
+let dataSaveTimer = null;
+
+const isDataOpen = () => folder && folder.data.has(folder.current);
+
+// 表格裡顯示名稱用：專案裡有 types、species 資料檔的話，下拉選單會列出它們
+function dataRefs() {
+    const refs = {};
+    for (const e of dataEntries(folder.project)) {
+        const d = folder.data.get(e.file);
+        if (!d) continue;
+        try {
+            const v = JSON.parse(d.text);
+            if (e.name === "types" && v.names) refs.types = v.names;
+            if (e.name === "species") refs.species = Object.fromEntries(Object.entries(v).map(([k, s]) => [k, s.name ?? k]));
+        } catch (err) {}
+    }
+    return refs;
+}
+
+// 資料改了：馬上重新合併（遊戲用新的數值重新執行），0.5 秒後存檔
+async function dataChanged(text) {
+    const d = folder.data.get(folder.current);
+    d.text = text;
+    d.dirty = true;
+    renderTabs();
+    await rebuildData();
+    if ($("auto-run").checked) {
+        clearTimeout(autoRunTimer);
+        autoRunTimer = setTimeout(autoRun, 300);
+    }
+    clearTimeout(dataSaveTimer);
+    dataSaveTimer = setTimeout(saveData, 500);
+}
+
+async function saveData() {
+    clearTimeout(dataSaveTimer);
+    for (const [path, d] of folder.data) {
+        if (!d.dirty) continue;
+        d.lastModified = await writeText(folder.dir, path, d.text);
+        d.dirty = false;
+    }
+    renderTabs();
+}
+
 async function saveMaps() {
     clearTimeout(mapSaveTimer);
     for (const [path, m] of folder.maps) {
@@ -635,13 +682,17 @@ async function openFolder(dir) {
 
 async function openFile(path) {
     const isMap = folder.maps.has(path);
-    if (!folder.files.has(path) && !isMap) return;
+    const isData = folder.data.has(path);
+    if (!folder.files.has(path) && !isMap && !isData) return;
     // 保留目前程式碼檔的游標、復原紀錄（目前是地圖就不用）
     if (folder.files.has(folder.current)) folder.files.get(folder.current).state = editor.state;
     folder.current = path;
-    $("editor").hidden = isMap;
+    $("editor").hidden = isMap || isData;
     $("mapedit").hidden = !isMap;
-    if (isMap) {
+    $("dataedit").hidden = !isData;
+    if (isData) {
+        dataEditor.open(path, folder.data.get(path).text, dataRefs());
+    } else if (isMap) {
         try {
             await mapEditor.open(path, folder.maps.get(path).text, projectImages(), Object.keys(folder.project.maps || {}));
             mapEditor.focus();
@@ -671,6 +722,14 @@ function renderTabs() {
         b.textContent = "🗺 " + path.replace(/^maps\//, "");
         b.title = path;
         b.className = (path === folder.current ? "on " : "") + (m.dirty ? "dirty" : "");
+        b.addEventListener("click", () => openFile(path));
+        bar.appendChild(b);
+    }
+    for (const [path, d] of folder.data) {
+        const b = document.createElement("button");
+        b.textContent = "📋 " + path.replace(/^data\//, "");
+        b.title = path + "（資料表）";
+        b.className = (path === folder.current ? "on " : "") + (d.dirty ? "dirty" : "");
         b.addEventListener("click", () => openFile(path));
         bar.appendChild(b);
     }
@@ -720,6 +779,7 @@ async function saveNow() {
         f.dirty = false;
     }
     await saveMaps();
+    await saveData();
 }
 
 // 合併後的遊戲檔也寫一份到 comet.json 的 output（例如 build/wildkin.lua），
@@ -801,9 +861,10 @@ setInterval(async () => {
     for (const [path, d] of folder.data) {
         try {
             const file = await (await fileHandle(folder.dir, path)).getFile();
-            if (file.lastModified === d.lastModified) continue;
+            if (file.lastModified === d.lastModified || d.dirty) continue;
             folder.data.set(path, { text: await file.text(), lastModified: file.lastModified });
             await rebuildData();
+            if (path === folder.current) await openFile(path);
             changed = true;
         } catch (e) {}
     }

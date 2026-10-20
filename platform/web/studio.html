@@ -93,6 +93,36 @@
   .me-obj-row { display: grid; grid-template-columns: 9em minmax(0, 1fr) auto; gap: 6px; align-items: center; color: var(--muted); }
   .me-obj-row textarea, .me-obj-row input, .me-obj-row select { width: 100%; box-sizing: border-box; }
   .me-status { padding: 6px 8px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); }
+  /* ---- 資料表編輯器（dataedit.js）---- */
+  #dataedit { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  #dataedit[hidden] { display: none; }
+  .de-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  .de-title { color: #fff; font-weight: 600; }
+  .de-spacer { flex: 1; }
+  .de-main { flex: 1; min-height: 0; overflow: auto; padding: 8px; }
+  .de-table { border-collapse: collapse; font-size: 12px; }
+  .de-table th { position: sticky; top: 0; background: #23262d; color: var(--muted); font-weight: 500; text-align: left;
+                 padding: 4px 6px; border-bottom: 1px solid var(--line); cursor: pointer; white-space: nowrap; }
+  .de-table td { padding: 2px 3px; border-bottom: 1px solid #262a31; vertical-align: middle; }
+  .de-table input, .de-table select { background: #1b1d22; color: var(--fg); border: 1px solid #30343c; border-radius: 4px;
+                                      padding: 3px 5px; font: inherit; box-sizing: border-box; }
+  .de-table input.de-num { width: 56px; text-align: right; }
+  .de-table input.de-text { width: 110px; }
+  .de-table input.de-long { width: 260px; }
+  .de-table input.de-json { width: 220px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+  .de-table input.bad, .de-textarea.bad { border-color: #ff5c6c; background: #3a1d22; }
+  .de-id { color: var(--accent); font-weight: 600; padding-right: 8px !important; white-space: nowrap; }
+  .de-row-tools { white-space: nowrap; }
+  .de-row-tools button { padding: 2px 6px; font-size: 11px; }
+  .de-area { margin-bottom: 16px; }
+  .de-area-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; color: var(--muted); font-size: 13px; }
+  .de-area-head b { color: #fff; }
+  .de-area-head input { width: 56px; text-align: right; }
+  .de-muted { color: var(--muted); }
+  .de-textarea { width: 100%; height: 100%; box-sizing: border-box; background: #1b1d22; color: var(--fg); border: 1px solid #30343c;
+                 font-family: ui-monospace, Menlo, monospace; font-size: 13px; padding: 8px; resize: none; }
+  .de-status { padding: 6px 8px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); }
+  .de-status.bad { color: #ff5c6c; }
   .single-only { display: contents; }
   body.folder-mode .single-only { display: none; }
 
@@ -239,6 +269,7 @@
     <div id="files" hidden></div>
     <div id="editor"></div>
     <div id="mapedit" hidden></div>
+    <div id="dataedit" hidden></div>
     <div id="syntax-msg" hidden title="點一下跳到那一行"></div>
   </div>
   <div class="side">
