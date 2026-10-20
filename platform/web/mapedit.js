@@ -8,7 +8,7 @@
 //   地圖：左鍵用目前的工具畫，右鍵擦掉
 //   工具：畫筆 B、橡皮擦 E、填滿 F、吸管 I；復原 Ctrl+Z、重做 Ctrl+Shift+Z
 //   名為 solid 的圖層是「碰撞層」：畫上去的格子是 1（走不過去），顯示成紅色
-//   「物件」：NPC、告示牌、門、擋路物、起點。點空格放一個，點物件選取（右邊改欄位），
+//   「物件」：NPC、告示牌、門、擋路物、起點、採集點。點空格放一個，點物件選取（右邊改欄位），
 //            拖曳移動，右鍵或 Delete 刪除。存在地圖檔的 objects，遊戲裡用 MAPOBJ.地圖名 取得
 
 import { decodePNG } from "./png.js";
@@ -39,6 +39,8 @@ const OBJECT_TYPES = {
     block: { label: "擋路物", mark: "擋", color: "#ff004d", fields: [
         ["tile", "圖", "tile"], ["need", "需要的野外技能（例如 伐木）", "text"]] },
     start: { label: "起點",  mark: "起", color: "#00e436", fields: [] },
+    gather: { label: "採集點", mark: "採", color: "#ab5236", fields: [
+        ["item", "撿到什麼（資料檔的道具編號，例如 wood）", "text"], ["amount", "一次幾個", "int"], ["tile", "圖", "tile"]] },
 };
 
 // root：放編輯器的元素；inflate：解 PNG 用；onChange(text)：地圖改了，text 是新的 JSON；
