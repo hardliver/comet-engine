@@ -201,7 +201,7 @@ for _, o in ipairs(MAPOBJ.camp) do
 end
 ```
 
-- 物件的種類：`npc`、`sign`（告示牌）、`door`（門）、`block`（擋路物：`tile`、`need`）、`start`（起點）、`gather`（採集點：`item`、`amount`、`tile`）、`lot`（設施空地，2×2 格，位置是左上角）。物件也可以加自己的欄位（例如 NPC 的 `trainer`），值是文字或整數
+- 物件的種類：`npc`、`sign`（告示牌）、`door`（門）、`block`（擋路物：`tile`、`need`）、`start`（起點）、`gather`（採集點：`item`、`amount`、`tile`）、`lot`（設施空地，2×2 格，位置是左上角）、`workbench`（工作台，2×2 格）。物件也可以加自己的欄位（例如 NPC 的 `trainer`），值是文字或整數
 - 物件的文字（告示牌內容等）也會收進字型，可以直接 `text()` 畫出來
 - 像素位置 = 第幾格 × 16
 

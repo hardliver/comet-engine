@@ -42,6 +42,7 @@ const OBJECT_TYPES = {
     gather: { label: "採集點", mark: "採", color: "#ab5236", fields: [
         ["item", "撿到什麼（資料檔的道具編號，例如 wood）", "text"], ["amount", "一次幾個", "int"], ["tile", "圖", "tile"]] },
     lot:   { label: "設施空地", mark: "地", color: "#83769c", fields: [] },
+    workbench: { label: "工作台", mark: "台", color: "#c2c3c7", fields: [] },
 };
 
 // root：放編輯器的元素；inflate：解 PNG 用；onChange(text)：地圖改了，text 是新的 JSON；
