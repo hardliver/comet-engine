@@ -14,7 +14,7 @@
 //     "output": "build/wildkin.lua"
 //   }
 //
-// sources：依順序接起來。
+// sources：依順序接起來，每個檔案包在 do … end 裡（檔案裡的 local 只在那個檔案有效）。
 // images：每張 PNG 轉成遊戲檔裡的圖片資料，遊戲裡用 IMG.town 取得圖片編號。
 //         所有圖片共用一個調色盤：每種顏色自動分配一個編號（從 16 開始，0–15 保留給預設色）。
 //
@@ -322,13 +322,18 @@ export function buildCart(project, files, imagesCode = "", fontCode = "", mapsCo
     if (dataCode) lines.push("", ...dataCode.split("\n"));
     const segments = [];
 
+    // 每個檔案包在 do … end 裡：檔案最外層的 local 只在自己的檔案裡有效。
+    // 不包的話，所有檔案的 local 都算在同一個區塊，Lua 規定一個區塊最多 200 個 local，
+    // 專案變大就會出現「too many local variables」；而且 A 檔的 local 會不小心被 B 檔用到。
+    // do 和 end 各自放在檔名那一行、最後多一行，原始碼的行號對應不變。
     for (const path of project.sources) {
         if (!(path in files)) throw new Error(`comet.json 列了 ${path}，但找不到這個檔案`);
-        lines.push("", `-- ==================== ${path} ====================`);
+        lines.push("", `do -- ==================== ${path} ====================`);
         const body = files[path].replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
         const start = lines.length + 1;   // 這個檔案第 1 行在遊戲檔的第幾行（從 1 開始數）
         lines.push(...body);
         segments.push({ path, start, end: start + body.length - 1 });
+        lines.push(`end -- ${path}`);
     }
     return { code: lines.join("\n") + "\n", segments };
 }

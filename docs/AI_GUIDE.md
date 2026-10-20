@@ -319,6 +319,7 @@ end
 4. **沒有** `io`、`os`、`require`、`dofile`、`loadfile`、`debug`，不能讀寫檔案、不能取得系統時間。要留下資料用 `save`／`loadsave`
 5. 不要依賴 `pairs()` 走訪表格的順序；需要固定順序時用陣列和 `ipairs()`
 6. 目前**沒有**音效
+7. 多個原始碼檔（`comet.json` 的 `sources`）合併時，每個檔案各自包在 `do … end` 裡：**一個檔案最外層的 `local` 在別的檔案看不到**。要給別的檔案用的函式、表格，不要加 `local`（例如 `function kin_new(...)`、`DATA`）
 
 ## 完整範例：接住掉落的方塊
 
