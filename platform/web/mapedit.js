@@ -44,6 +44,7 @@ const OBJECT_TYPES = {
     lot:   { label: "設施空地", mark: "地", color: "#83769c", fields: [] },
     workbench: { label: "工作台", mark: "台", color: "#c2c3c7", fields: [] },
     bed:   { label: "床（睡覺過一天）", mark: "床", color: "#ff77a8", fields: [] },
+    event: { label: "事件（劇情）", mark: "事", color: "#7e2553", fields: [["scene", "劇本編號（SCENE 表格的名字）", "text"]] },
 };
 
 // root：放編輯器的元素；inflate：解 PNG 用；onChange(text)：地圖改了，text 是新的 JSON；
