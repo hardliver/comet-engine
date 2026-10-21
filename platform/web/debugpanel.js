@@ -5,6 +5,8 @@
 //      先當算式算（顯示結果），不是算式再當一般敘述執行。↑↓ 叫出之前打過的指令
 //   2. 快捷按鈕：遊戲自己定義的 DEBUG_COMMANDS = { { "按鈕上的字", "要執行的 Lua" }, … }
 //   3. 清除這個遊戲的存檔（遊戲的 id 看原始碼開頭的 -- id:）
+//   5. 工具：遊戲定義 DEBUG_TOOLS = { { name, fields = { { 欄位, 標題, "choice"／"int", 預設, 選項 } }, run = function(值) return 文字 end } }
+//      這裡畫成表單，按「執行」呼叫遊戲的 run，結果顯示在下面（Wildkin 的戰鬥試算、平衡表）
 //   4. 狀態樹：遊戲定義 DEBUG_VIEW = { "DAY", "party", "BAG" }（算式字串），這裡每半秒更新一次。
 //      點表格展開／收合；點一個值，指令列會填好「路徑 = 值」，改一改按 Enter 就生效
 //
@@ -51,6 +53,7 @@ export function createDebugPanel({ root, engine, toast, getSource, isVisible }) 
         <button class="dbg-run">執行</button>
       </div>
       <div class="dbg-buttons"></div>
+      <div class="dbg-tools"></div>
       <div class="dbg-out"></div>
       <div class="dbg-tree"></div>`;
     const input = root.querySelector(".dbg-input");
@@ -136,6 +139,78 @@ export function createDebugPanel({ root, engine, toast, getSource, isVisible }) 
         buttonsEl.appendChild(clear);
     }
 
+    // ---- 工具（遊戲的 DEBUG_TOOLS）----
+    const toolsEl = root.querySelector(".dbg-tools");
+    const LIST_TOOLS = "(function() local t = {} for i, tool in ipairs(rawget(_G, 'DEBUG_TOOLS') or {}) do " +
+        "t[#t + 1] = 'T\\t' .. i .. '\\t' .. tostring(tool.name) " +
+        "for _, f in ipairs(tool.fields or {}) do local opts = f[5] if type(opts) == 'function' then opts = opts() end " +
+        "local o = {} for _, p in ipairs(opts or {}) do o[#o + 1] = tostring(p[1]) .. '=' .. tostring(p[2]) end " +
+        "t[#t + 1] = 'F\\t' .. f[1] .. '\\t' .. f[2] .. '\\t' .. f[3] .. '\\t' .. tostring(f[4]) .. '\\t' .. table.concat(o, '|') end end " +
+        "return table.concat(t, '\\n') end)()";
+    let lastTools = null;
+    function refreshTools() {
+        const r = engine.eval(LIST_TOOLS, 2);
+        const text = r.ok ? unquote(r.text) : "";
+        if (text === lastTools) return;
+        lastTools = text;
+        toolsEl.innerHTML = "";
+        let tool = null;
+        for (const line of text.split("\n")) {
+            const p = line.split("\t");
+            if (p[0] === "T") {
+                tool = { index: p[1], fields: [] };
+                const box = document.createElement("details");
+                box.className = "dbg-tool";
+                box.innerHTML = `<summary></summary><div class="dbg-form"></div><pre class="dbg-tool-out"></pre>`;
+                box.querySelector("summary").textContent = "🧮 " + p[2];
+                tool.box = box;
+                const run = document.createElement("button");
+                run.textContent = "執行";
+                const t = tool;
+                run.addEventListener("click", () => {
+                    const parts = t.fields.map((f) => {
+                        const v = f.input.value;
+                        return `${f.key} = ${f.kind === "int" ? (parseInt(v, 10) || 0) : JSON.stringify(v)}`;
+                    });
+                    const out = box.querySelector(".dbg-tool-out");
+                    out.textContent = "執行中……";
+                    setTimeout(() => {
+                        const r = engine.eval(`DEBUG_TOOLS[${t.index}].run({ ${parts.join(", ")} })`, 0);
+                        out.textContent = r.ok ? unquote(r.text) : `錯誤：${r.text}`;
+                    }, 10);
+                });
+                tool.run = run;
+                toolsEl.appendChild(box);
+            } else if (p[0] === "F" && tool) {
+                const [, key, label, kind, def, opts] = p;
+                const wrap = document.createElement("label");
+                wrap.textContent = label + " ";
+                let input;
+                if (kind === "choice") {
+                    input = document.createElement("select");
+                    for (const o of (opts || "").split("|").filter(Boolean)) {
+                        const i = o.indexOf("=");
+                        const opt = document.createElement("option");
+                        opt.value = o.slice(0, i);
+                        opt.textContent = o.slice(i + 1);
+                        input.appendChild(opt);
+                    }
+                    input.value = def;
+                } else {
+                    input = document.createElement("input");
+                    input.type = "number";
+                    input.value = def;
+                    input.style.width = "60px";
+                }
+                input.addEventListener("keydown", (e) => e.stopPropagation());
+                wrap.appendChild(input);
+                tool.box.querySelector(".dbg-form").appendChild(wrap);
+                tool.fields.push({ key, kind, input });
+            }
+            if (tool && tool.run) tool.box.querySelector(".dbg-form").appendChild(tool.run);
+        }
+    }
+
     // ---- 狀態樹（遊戲的 DEBUG_VIEW）----
     const open = new Set();   // 展開的表格（用路徑記）；第 0 層預設展開
     const closed = new Set(); // 第 0 層被收起來的
@@ -201,11 +276,12 @@ export function createDebugPanel({ root, engine, toast, getSource, isVisible }) 
     setInterval(() => {
         if (!isVisible()) return;
         refreshButtons();
+        refreshTools();
         refreshTree(false);
     }, REFRESH_MS);
 
     return {
         // 遊戲重新執行之後呼叫：按鈕可能變了
-        reset() { lastButtons = null; lastText = null; },
+        reset() { lastButtons = null; lastText = null; lastTools = null; },
     };
 }

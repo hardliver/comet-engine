@@ -223,6 +223,13 @@
   .dbg-count { color: var(--muted); }
   .dbg-val { color: #ce9178; }
   .dbg-hint { color: var(--muted); line-height: 1.6; }
+  .dbg-tools:empty { display: none; }
+  .dbg-tool { margin-bottom: 6px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+  .dbg-tool summary { cursor: pointer; }
+  .dbg-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+  .dbg-form select, .dbg-form input { font: inherit; background: #111317; color: #fff; border: 1px solid var(--line); border-radius: 4px; }
+  .dbg-tool-out { margin: 0; max-height: 260px; overflow: auto; white-space: pre-wrap; }
+  .dbg-tool-out:empty { display: none; }
 
   #api h2 { font-size: 14px; margin: 14px 0 6px; color: #fff; }
   #api h3 { font-size: 13px; margin: 12px 0 4px; color: #fff; }
