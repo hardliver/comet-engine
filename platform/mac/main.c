@@ -13,6 +13,7 @@
 //   加上 --pak 檔.pak：遊戲的資源包（背景、角色動畫，見 core/pak.h）
 //   加上 --saves 資料夾：存檔寫在那個資料夾（檔名「id.欄位.sav」，id 的 / 換成 _）。
 //   沒加就只存在記憶體裡，程式結束就沒了（測試時不會留下檔案）
+//   加上 --profile：運算預算（Level 1）。跑完印出平均、最重的 5 幀（第幾幀、Lua 指令、像素、繪圖呼叫、預估 Pico 負載 %）
 //   ./build/mac 系統卡匣.lua 輸出圖檔 --system --game id 遊戲.lua [--game id 遊戲.lua …]
 //                                                    Nova 模式：載入系統卡匣，用另一組預先寫好的按鍵
 //                                                    跑 150 幀（選遊戲、啟動、回 HOME），測試系統卡匣
@@ -339,6 +340,7 @@ int main(int argc, char **argv)
     // 先挑出 --record／--replay，剩下的依序是遊戲檔、輸出圖檔
     const char *record_path = NULL, *replay_path = NULL, *pak_path = NULL;
     const char *input_path = NULL, *shots = NULL;
+    int profile = 0;
     int system_mode = 0;
     const char *game_ids[MAX_GAME_ARGS], *game_paths[MAX_GAME_ARGS];
     int ngames = 0;
@@ -357,6 +359,8 @@ int main(int argc, char **argv)
             pak_path = argv[++i];
         } else if (strcmp(argv[i], "--saves") == 0 && i + 1 < argc) {
             save_dir = argv[++i];
+        } else if (strcmp(argv[i], "--profile") == 0) {
+            profile = 1;
         } else if (strcmp(argv[i], "--system") == 0) {
             system_mode = 1;
         } else if (strcmp(argv[i], "--game") == 0 && i + 2 < argc && ngames < MAX_GAME_ARGS) {
@@ -415,6 +419,7 @@ int main(int argc, char **argv)
         replay_record_begin();
     }
 
+    if (profile) engine_profile(1);
     int err = engine_load(src, len);
     free(src);
     if (err) {
@@ -443,6 +448,10 @@ int main(int argc, char **argv)
         frames = load_input_script(input_path);
         if (frames < 0) return 1;
     }
+    // --profile：每幀的負載，最後排出最重的 5 幀
+    enum { TOP = 5 };
+    uint32_t top_load[TOP] = { 0 }, top_frame[TOP] = { 0 }, top_instr[TOP] = { 0 }, top_pix[TOP] = { 0 }, top_calls[TOP] = { 0 };
+    uint64_t sum_load = 0;
     for (int i = 0; i < frames; i++) {
         if (input_path != NULL) {
             input_set(0, script_keys(i));
@@ -452,6 +461,22 @@ int main(int argc, char **argv)
             scripted_input(i);
         }
         engine_frame();
+        if (profile) {
+            uint32_t ld = engine_prof_load();
+            sum_load += ld;
+            // 插進「最重的 5 幀」（由大到小）
+            for (int k = 0; k < TOP; k++) {
+                if (ld > top_load[k]) {
+                    for (int m = TOP - 1; m > k; m--) {
+                        top_load[m] = top_load[m - 1]; top_frame[m] = top_frame[m - 1];
+                        top_instr[m] = top_instr[m - 1]; top_pix[m] = top_pix[m - 1]; top_calls[m] = top_calls[m - 1];
+                    }
+                    top_load[k] = ld; top_frame[k] = (uint32_t)(i + 1);
+                    top_instr[k] = engine_prof_instr(); top_pix[k] = engine_prof_pixels(); top_calls[k] = engine_prof_calls();
+                    break;
+                }
+            }
+        }
         // --shots：這一幀要不要另外存圖（逗號分隔的幀數，幀數從 1 算：跑完第 N 幀）
         if (shots != NULL) {
             const char *p = shots;
@@ -467,6 +492,14 @@ int main(int argc, char **argv)
                 if (p == NULL) break;
                 p++;
             }
+        }
+    }
+    if (profile && frames > 0) {
+        printf("運算預算（Level 1 預估，100%% = Pico 一幀的時間剛好用完）：平均 %llu.%llu%%\n",
+               (unsigned long long)(sum_load / frames / 10), (unsigned long long)(sum_load / frames % 10));
+        for (int k = 0; k < TOP && top_load[k] > 0; k++) {
+            printf("  第 %u 幀：%u.%u%%（Lua %u 指令、%u 像素、%u 次繪圖呼叫）\n", top_frame[k],
+                   top_load[k] / 10, top_load[k] % 10, top_instr[k], top_pix[k], top_calls[k]);
         }
     }
 

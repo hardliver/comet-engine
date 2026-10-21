@@ -42,6 +42,20 @@ const char *engine_check_error(void);
 int engine_eval(const char *src, size_t len, int mode);
 const char *engine_eval_result(void);
 
+// ---- 運算預算（Level 1 = Pico 2，RP2350 150 MHz）----
+// 開發工具用：開著時每幀記錄 Lua 指令數、畫了幾個像素、呼叫了幾次繪圖 API，換算成「預估 Pico 要花幾個 CPU 週期」。
+// 換算係數是估計值（Lua 5.4 在 Cortex-M33 上一個指令約 40 週期、寫一個像素約 8 週期、一次 Lua→C 呼叫約 300 週期），
+// 硬體到了之後（路線圖 2-4）用實機量測校正。一幀的預算 = 150 MHz ÷ 60 = 2,500,000 週期。
+#define L1_CYCLES_PER_FRAME 2500000u
+#define L1_CYC_PER_INSTR 40u
+#define L1_CYC_PER_PIXEL 8u
+#define L1_CYC_PER_CALL 300u
+void engine_profile(int on);
+uint32_t engine_prof_instr(void);    // 上一幀的 Lua 指令數
+uint32_t engine_prof_pixels(void);   // 上一幀畫的像素
+uint32_t engine_prof_calls(void);    // 上一幀的繪圖 API 呼叫次數
+uint32_t engine_prof_load(void);     // 上一幀的預估負載（千分比；1000 = 剛好用完 Pico 一幀的時間）
+
 // 平台用：每一幀呼叫一次（每秒 60 次）
 void engine_frame(void);
 

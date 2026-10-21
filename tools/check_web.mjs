@@ -600,4 +600,31 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
     else fail(name, problems.join("；"));
 }
 
+// ---- 測試 15 ----
+{
+    const name = "運算預算：Lua 指令數、像素、繪圖呼叫、預估負載";
+    const problems = [];
+    try {
+        const engine = await loadEngine();
+        engine.engine_profile(1);
+        // 每幀：cls（76,800 像素）＋ 一個 10×10 的 rect（100 像素）＋ 1000 次空迴圈
+        load(engine, "function _update() for i = 1, 1000 do end end\nfunction _draw() cls(1) rect(5, 5, 10, 10, 8) end\n");
+        engine.engine_frame();
+        const instr = engine.engine_prof_instr(), pixels = engine.engine_prof_pixels(), calls = engine.engine_prof_calls();
+        if (pixels !== 76800 + 100) problems.push(`像素應該是 76900，得到 ${pixels}`);
+        if (calls !== 2) problems.push(`繪圖呼叫應該是 2，得到 ${calls}`);
+        if (instr < 1000 || instr > 10000) problems.push(`Lua 指令數不合理：${instr}`);
+        const load = engine.engine_prof_load();
+        const expect = Math.floor((instr * 40 + pixels * 8 + calls * 300) * 1000 / 2500000);
+        if (load !== expect) problems.push(`負載算錯：${load}，應該是 ${expect}`);
+        engine.engine_profile(0);
+        engine.engine_frame();
+        if (engine.engine_prof_instr() !== 0) problems.push("關掉之後不該再算 Lua 指令");
+    } catch (e) {
+        problems.push(String(e));
+    }
+    if (problems.length === 0) ok(name);
+    else fail(name, problems.join("；"));
+}
+
 process.exit(failures ? 1 : 0);

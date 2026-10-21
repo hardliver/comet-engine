@@ -20,6 +20,9 @@ void gfx_reset(void);
 // ---- 基本繪圖 ----
 
 // 清除整個畫面，填滿 color（不受相機影響）
+// 運算預算（engine.h 的 engine_profile）：這一幀畫了幾個像素（每一個「處理過」的點都算，透明的也算）
+extern uint32_t gfx_pixels_drawn;
+
 void gfx_cls(uint8_t color);
 
 // 在 (x, y) 畫一個點；超出畫面就不畫

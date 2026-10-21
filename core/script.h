@@ -35,4 +35,9 @@ int script_failed(void);
 // 結果寫進 out（最多 cap byte，含結尾的 0）。成功回傳 0，出錯回傳 1（out 是錯誤訊息）
 int script_eval(const char *src, size_t len, int mode, char *out, size_t cap);
 
+// 運算預算：開著時累計 Lua 指令數（每 100 個算一次）、繪圖 API 呼叫次數。engine.c 每幀讀、歸零
+extern uint32_t script_instr;
+extern uint32_t script_draw_calls;
+void script_profile(int on);
+
 #endif

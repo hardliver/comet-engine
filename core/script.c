@@ -36,8 +36,31 @@ static int failed = 0;
 // 規格要求遊戲只用整數，各平台的結果才會一致。
 
 // cls(color)：清除畫面，color 可省略（預設 0 黑色）
+// ============================================================
+// 運算預算（engine_profile 開著時才計）：Lua 執行了幾個指令、呼叫了幾次繪圖 API
+// ============================================================
+uint32_t script_instr = 0;
+uint32_t script_draw_calls = 0;
+static int profiling = 0;
+#define HOOK_EVERY 100   // 每 100 個 Lua 指令叫一次 hook（每個指令都叫太慢）
+
+static void count_hook(lua_State *L, lua_Debug *ar)
+{
+    (void)L; (void)ar;
+    script_instr += HOOK_EVERY;
+}
+
+void script_profile(int on)
+{
+    profiling = on;
+    if (L != NULL) lua_sethook(L, on ? count_hook : NULL, on ? LUA_MASKCOUNT : 0, HOOK_EVERY);
+}
+
+#define DRAW_CALL() (script_draw_calls++)
+
 static int l_cls(lua_State *L)
 {
+    DRAW_CALL();
     lua_Integer c = luaL_optinteger(L, 1, 0);
     gfx_cls((uint8_t)c);
     return 0;
@@ -46,6 +69,7 @@ static int l_cls(lua_State *L)
 // pset(x, y, color)：畫一個點
 static int l_pset(lua_State *L)
 {
+    DRAW_CALL();
     lua_Integer x = luaL_checkinteger(L, 1);
     lua_Integer y = luaL_checkinteger(L, 2);
     lua_Integer c = luaL_checkinteger(L, 3);
@@ -56,6 +80,7 @@ static int l_pset(lua_State *L)
 // rect(x, y, w, h, color)：畫實心矩形
 static int l_rect(lua_State *L)
 {
+    DRAW_CALL();
     lua_Integer x = luaL_checkinteger(L, 1);
     lua_Integer y = luaL_checkinteger(L, 2);
     lua_Integer w = luaL_checkinteger(L, 3);
@@ -205,6 +230,7 @@ static int l_newimage(lua_State *L)
 // spr(img, n, x, y, flip_x, flip_y)：畫圖片的第 n 格（小格大小在 newimage 時決定）
 static int l_spr(lua_State *L)
 {
+    DRAW_CALL();
     gfx_spr((int)luaL_checkinteger(L, 1), (int)luaL_checkinteger(L, 2),
             (int)luaL_checkinteger(L, 3), (int)luaL_checkinteger(L, 4),
             lua_toboolean(L, 5), lua_toboolean(L, 6));
@@ -215,6 +241,7 @@ static int l_spr(lua_State *L)
 // 畫圖片的任意範圍，可以放大縮小。dw、dh 省略就是原尺寸
 static int l_sspr(lua_State *L)
 {
+    DRAW_CALL();
     int img = (int)luaL_checkinteger(L, 1);
     int sx = (int)luaL_checkinteger(L, 2);
     int sy = (int)luaL_checkinteger(L, 3);
@@ -265,6 +292,7 @@ static void check_font(lua_State *L)
 // s 也可以是數字，例如 text(hp, 10, 10)
 static int l_text(lua_State *L)
 {
+    DRAW_CALL();
     check_font(L);
     size_t len;
     const char *s = luaL_checklstring(L, 1, &len);
@@ -341,6 +369,7 @@ static void check_map_result(lua_State *L, int r, const char *layer)
 // map(地圖, 圖層, ox, oy)：畫一個圖層，地圖左上角放在 (ox, oy)（省略是 0, 0）
 static int l_map(lua_State *L)
 {
+    DRAW_CALL();
     int m = (int)luaL_checkinteger(L, 1);
     const char *layer = luaL_checkstring(L, 2);
     int ox = (int)luaL_optinteger(L, 3, 0);
@@ -473,6 +502,7 @@ int script_load(const char *src, size_t len, const char *name, int is_system)
         return 1;
     }
     open_libs(L, is_system);
+    script_profile(profiling);   // 新的 Lua 環境：hook 要重新裝
 
     // 編譯原始碼。"t" 代表只接受文字，不接受預先編譯好的二進位檔（比較安全）
     if (luaL_loadbufferx(L, src, len, name, "t") != LUA_OK) {

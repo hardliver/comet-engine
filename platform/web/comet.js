@@ -220,6 +220,18 @@ export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log
             return { ok: !err, text: readCString(exports, exports.engine_eval_result()) };
         },
 
+        // 運算預算（Level 1）：開了之後每幀記錄 Lua 指令數、像素、繪圖呼叫次數（C 的 engine_profile）
+        profile(on) { exports.engine_profile(on ? 1 : 0); },
+        // 上一幀的數字；load 是預估 Pico 負載（千分比，1000 = 一幀的時間剛好用完）
+        prof() {
+            return {
+                instr: exports.engine_prof_instr() >>> 0,
+                pixels: exports.engine_prof_pixels() >>> 0,
+                calls: exports.engine_prof_calls() >>> 0,
+                load: exports.engine_prof_load() >>> 0,
+            };
+        },
+
         // 一位玩家這一幀的輸入：{ buttons, lx, ly, rx, ry }（格式見 input.js）
         setInput(player, s) {
             exports.input_set(player, s.buttons);

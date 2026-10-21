@@ -186,6 +186,13 @@
     margin-top: 6px;
   }
   .status .playing { color: var(--accent); }
+  #budget { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; cursor: help; margin: 0 8px; }
+  .budget-bar { width: 48px; height: 6px; background: #2a2e37; border-radius: 3px; overflow: hidden; }
+  .budget-fill { display: block; height: 100%; width: 0; background: var(--accent); }
+  #budget.warn .budget-fill { background: #ffa300; }
+  #budget.warn .budget-text { color: #ffa300; }
+  #budget.over .budget-fill { background: var(--error); }
+  #budget.over .budget-text { color: var(--error); }
 
   /* ---- 下方分頁：主控台／API ---- */
   .tabs { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--line); }
@@ -306,6 +313,7 @@
       <canvas id="screen" width="320" height="240" tabindex="0"></canvas>
       <div class="status">
         <span id="focus-hint">點一下畫面就能用鍵盤玩：WASD 移動、K = A、L = B、J = X、I = Y、Q／E = L／R、方向鍵 = 右搖桿、Enter = Start、Tab = Select、按住 ` 加速</span>
+        <span id="budget" title="運算預算"><span class="budget-bar"><span class="budget-fill"></span></span><span class="budget-text">Pico —</span></span>
         <span id="frame-count"></span>
       </div>
     </div>

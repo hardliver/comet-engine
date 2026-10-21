@@ -9,6 +9,7 @@
 // 畫面：每個像素 1 byte，存的是顏色編號（0–255）
 // static：只有這個檔案能直接碰它，別人只能透過函式
 static uint8_t framebuffer[SCREEN_W * SCREEN_H];
+uint32_t gfx_pixels_drawn = 0;   // 運算預算用（engine.c 每幀歸零）
 
 // 預設調色盤：前 16 色，其餘是 0（黑色）。正式調色盤留到規格 v0.1
 static const uint8_t default_palette[16 * 3] = {
@@ -88,6 +89,7 @@ void gfx_reset(void)
 void gfx_cls(uint8_t color)
 {
     memset(framebuffer, color, sizeof(framebuffer));
+    gfx_pixels_drawn += SCREEN_W * SCREEN_H;
 }
 
 void gfx_pset(int x, int y, uint8_t color)
@@ -100,6 +102,7 @@ void gfx_pset(int x, int y, uint8_t color)
         return;
     }
     framebuffer[y * SCREEN_W + x] = color;
+    gfx_pixels_drawn++;
 }
 
 void gfx_rect(int x, int y, int w, int h, uint8_t color)
@@ -118,6 +121,7 @@ void gfx_rect(int x, int y, int w, int h, uint8_t color)
     if (y1 > SCREEN_H) y1 = SCREEN_H;
 
     // 裁切後已在畫面內，可以直接寫陣列，不用每點再檢查
+    if (x1 > x && y1 > y) gfx_pixels_drawn += (uint32_t)((x1 - x) * (y1 - y));
     for (int py = y; py < y1; py++) {
         for (int px = x; px < x1; px++) {
             framebuffer[py * SCREEN_W + px] = color;
@@ -224,6 +228,7 @@ void gfx_sspr(int img, int sx, int sy, int sw, int sh,
         if (flip_y) ty = sh - 1 - ty;
         int iy = sy + ty;
         if (iy < 0 || iy >= im->h) continue;
+        gfx_pixels_drawn += (uint32_t)dw;   // 這一列每個點都要算一次（畫面外的也是）
 
         for (int x = 0; x < dw; x++) {
             int px = dx + x;
@@ -285,6 +290,7 @@ void gfx_bg_draw(void)
         if (cam_x > 0) x1 = SCREEN_W - cam_x;
         if (cam_x < 0) x0 = -cam_x;
         if (x1 <= x0) continue;
+        gfx_pixels_drawn += (uint32_t)(x1 - x0);
         memcpy(&framebuffer[y * SCREEN_W + x0], &bg_pixels[sy * SCREEN_W + x0 + cam_x], (size_t)(x1 - x0));
     }
 }
@@ -361,6 +367,7 @@ void gfx_sprite_draw(const uint8_t *data, int w, int h,
             sprite_row(data, ty, w, row);
             last_ty = ty;
         }
+        gfx_pixels_drawn += (uint32_t)dw;
         int by = by0 + y;
         const uint8_t *drow = (test && by >= 0 && by < SCREEN_H) ? bg_depth + (by >> 1) * BG_DEPTH_W : NULL;
         for (int x = 0; x < dw; x++) {

@@ -100,8 +100,26 @@ const char *engine_eval_result(void)
     return eval_result;
 }
 
+static uint32_t last_instr, last_pixels, last_calls;
+
+void engine_profile(int on) { script_profile(on); }
+uint32_t engine_prof_instr(void) { return last_instr; }
+uint32_t engine_prof_pixels(void) { return last_pixels; }
+uint32_t engine_prof_calls(void) { return last_calls; }
+uint32_t engine_prof_load(void)
+{
+    uint64_t cyc = (uint64_t)last_instr * L1_CYC_PER_INSTR + (uint64_t)last_pixels * L1_CYC_PER_PIXEL +
+                   (uint64_t)last_calls * L1_CYC_PER_CALL;
+    return (uint32_t)(cyc * 1000 / L1_CYCLES_PER_FRAME);
+}
+
 void engine_frame(void)
 {
+    // 運算預算：從這裡開始算這一幀（幀和幀之間的除錯指令不算）
+    script_instr = 0;
+    script_draw_calls = 0;
+    gfx_pixels_drawn = 0;
+
     // 回 HOME 的按鍵：看的是玩家真正按的鍵，所以在重播蓋掉輸入之前
     system_before_frame();
 
@@ -115,6 +133,9 @@ void engine_frame(void)
         script_call("_draw");     // 再畫出來
     }
     frame_count++;
+    last_instr = script_instr;
+    last_pixels = gfx_pixels_drawn;
+    last_calls = script_draw_calls;
     replay_after_frame(frame_count);
 }
 
