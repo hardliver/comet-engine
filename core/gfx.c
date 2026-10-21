@@ -11,6 +11,11 @@
 static uint8_t framebuffer[SCREEN_W * SCREEN_H];
 uint32_t gfx_pixels_drawn = 0;   // 運算預算用（engine.c 每幀歸零）
 
+// 繪圖用的顏色替換（dpal）：之後畫的每個點，顏色 c 先換成 dmap[c] 再寫進畫面。
+// 和 pal（改調色盤的顏色，畫面上「所有」用到這個編號的點都會變）不同：dpal 只影響之後畫的東西。
+// 用途：異色野伴（同一張圖換幾個顏色）、受傷閃白（全部換成白）、暗處（換成比較暗的顏色）
+static uint8_t dmap[256];
+
 // 預設調色盤：前 16 色，其餘是 0（黑色）。正式調色盤留到規格 v0.1
 static const uint8_t default_palette[16 * 3] = {
       0,   0,   0,   // 0  黑
@@ -73,6 +78,7 @@ void gfx_reset(void)
     bg_loaded = 0;
     cam_x = 0;
     cam_y = 0;
+    gfx_dpal_reset();
     for (int i = 1; i <= MAX_IMAGES; i++) {
         free(images[i].pixels);   // free(NULL) 什麼都不做，是安全的
         images[i].pixels = NULL;
@@ -92,8 +98,28 @@ void gfx_cls(uint8_t color)
     gfx_pixels_drawn += SCREEN_W * SCREEN_H;
 }
 
+void gfx_dpal_reset(void)
+{
+    for (int i = 0; i < 256; i++) dmap[i] = (uint8_t)i;
+}
+
+void gfx_dpal(int from, int to)
+{
+    if (from < 0 || from > 255 || to < 0 || to > 255) return;
+    dmap[from] = (uint8_t)to;
+}
+
+void gfx_palget(int index, uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    if (index < 0 || index > 255) { *r = *g = *b = 0; return; }
+    *r = base_palette[index * 3 + 0];
+    *g = base_palette[index * 3 + 1];
+    *b = base_palette[index * 3 + 2];
+}
+
 void gfx_pset(int x, int y, uint8_t color)
 {
+    color = dmap[color];
     x -= cam_x;
     y -= cam_y;
     // 超出畫面就直接離開。C 不會幫你檢查陣列邊界，
@@ -107,6 +133,7 @@ void gfx_pset(int x, int y, uint8_t color)
 
 void gfx_rect(int x, int y, int w, int h, uint8_t color)
 {
+    color = dmap[color];
     x -= cam_x;
     y -= cam_y;
 
@@ -240,8 +267,8 @@ void gfx_sspr(int img, int sx, int sy, int sw, int sh,
             if (ix < 0 || ix >= im->w) continue;
 
             uint8_t c = im->pixels[iy * im->w + ix];
-            if (c != 0) {                  // 0 是透明，不畫
-                framebuffer[py * SCREEN_W + px] = c;
+            if (c != 0) {                  // 0 是透明，不畫（看的是原本的顏色，替換之前）
+                framebuffer[py * SCREEN_W + px] = dmap[c];
             }
         }
     }
@@ -384,7 +411,7 @@ void gfx_sprite_draw(const uint8_t *data, int w, int h,
                     if (d != 0 && d < dz) continue;   // 被背景的東西擋住
                 }
             }
-            framebuffer[py * SCREEN_W + px] = c;
+            framebuffer[py * SCREEN_W + px] = dmap[c];
         }
     }
 }

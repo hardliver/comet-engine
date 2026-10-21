@@ -162,6 +162,44 @@ static int l_pal(lua_State *L)
     return 0;
 }
 
+// dpal(from, to)：之後畫的顏色 from 換成 to；dpal({ [from] = to, … })：一次換好幾個；dpal()：全部還原
+static int l_dpal(lua_State *L)
+{
+    if (lua_gettop(L) == 0 || lua_isnil(L, 1)) {
+        gfx_dpal_reset();
+        return 0;
+    }
+    if (lua_istable(L, 1)) {
+        lua_pushnil(L);
+        while (lua_next(L, 1) != 0) {
+            if (lua_isinteger(L, -2) && lua_isinteger(L, -1)) {
+                gfx_dpal((int)lua_tointeger(L, -2), (int)lua_tointeger(L, -1));
+            }
+            lua_pop(L, 1);
+        }
+        return 0;
+    }
+    lua_Integer from = luaL_checkinteger(L, 1);
+    lua_Integer to = luaL_checkinteger(L, 2);
+    luaL_argcheck(L, from >= 0 && from <= 255, 1, "color index must be 0-255");
+    luaL_argcheck(L, to >= 0 && to <= 255, 2, "color index must be 0-255");
+    gfx_dpal((int)from, (int)to);
+    return 0;
+}
+
+// palget(i)：調色盤第 i 號的顏色，回傳 r, g, b
+static int l_palget(lua_State *L)
+{
+    lua_Integer i = luaL_checkinteger(L, 1);
+    luaL_argcheck(L, i >= 0 && i <= 255, 1, "color index must be 0-255");
+    uint8_t r, g, b;
+    gfx_palget((int)i, &r, &g, &b);
+    lua_pushinteger(L, r);
+    lua_pushinteger(L, g);
+    lua_pushinteger(L, b);
+    return 3;
+}
+
 // camera(x, y)：之後的繪圖都往左上平移 (x, y)；camera() 歸零
 static int l_camera(lua_State *L)
 {
@@ -413,6 +451,8 @@ static const luaL_Reg api[] = {
     { "frame", l_frame },
     { "rnd",   l_rnd   },
     { "pal",      l_pal      },
+    { "dpal",     l_dpal     },
+    { "palget",   l_palget   },
     { "camera",   l_camera   },
     { "newimage", l_newimage },
     { "spr",      l_spr      },

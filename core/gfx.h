@@ -25,6 +25,12 @@ extern uint32_t gfx_pixels_drawn;
 
 void gfx_cls(uint8_t color);
 
+// 繪圖用的顏色替換（見 gfx.c 的 dmap）：之後畫的顏色 from 換成 to；reset 全部還原。不影響 cls、bg
+void gfx_dpal(int from, int to);
+void gfx_dpal_reset(void);
+// 調色盤第 index 號的顏色（pal 設的原色，不含 paltint 的染色）
+void gfx_palget(int index, uint8_t *r, uint8_t *g, uint8_t *b);
+
 // 在 (x, y) 畫一個點；超出畫面就不畫
 void gfx_pset(int x, int y, uint8_t color);
 

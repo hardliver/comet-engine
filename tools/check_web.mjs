@@ -627,4 +627,25 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
     else fail(name, problems.join("；"));
 }
 
+// ---- 測試 16 ----
+{
+    const name = "繪圖用的顏色替換 dpal、讀調色盤 palget";
+    const problems = [];
+    try {
+        const engine = await loadEngine();
+        load(engine, "function _draw() cls(0) dpal(8, 11) rect(0,0,4,4,8) dpal() rect(4,0,4,4,8) " +
+                     "dpal({[8]=12,[7]=2}) rect(8,0,4,4,8) pset(12,0,7) dpal() local r,g,b = palget(8) print(r..','..g..','..b) end\n");
+        engine.engine_frame();
+        const mem = new Uint8Array(engine.memory.buffer);
+        const fb = engine.gfx_framebuffer();
+        const got = [mem[fb], mem[fb + 4], mem[fb + 8], mem[fb + 12]].join(",");
+        if (got !== "11,8,12,2") problems.push(`畫出來的顏色 ${got}，應該是 11,8,12,2`);
+        if (!logs.includes("255,0,77")) problems.push("palget(8) 應該是 255,0,77（PICO-8 的紅）");
+    } catch (e) {
+        problems.push(String(e));
+    }
+    if (problems.length === 0) ok(name);
+    else fail(name, problems.join("；"));
+}
+
 process.exit(failures ? 1 : 0);
