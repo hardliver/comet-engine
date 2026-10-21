@@ -202,6 +202,28 @@
   #console .err:hover { text-decoration: underline; }
   #console .info { color: var(--muted); }
 
+  /* ---- 狀態分頁（debugpanel.js）---- */
+  #state { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .dbg-cmd { display: flex; gap: 6px; margin-bottom: 6px; }
+  .dbg-input { flex: 1; min-width: 0; font: inherit; padding: 5px 8px; background: #111317; color: #fff; border: 1px solid var(--line); border-radius: 6px; }
+  .dbg-input:focus { outline: 1px solid var(--accent); }
+  .dbg-buttons { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+  .dbg-buttons button { font-size: 12px; padding: 3px 8px; }
+  .dbg-buttons .dbg-danger { margin-left: auto; color: var(--error); }
+  .dbg-out { max-height: 90px; overflow: auto; margin-bottom: 6px; white-space: pre-wrap; }
+  .dbg-out:empty { display: none; }
+  .dbg-line { padding: 1px 0; }
+  .dbg-line.cmd { color: var(--muted); }
+  .dbg-line.err { color: var(--error); }
+  .dbg-tree { border-top: 1px solid var(--line); padding-top: 4px; }
+  .dbg-row { padding: 1px 0; cursor: pointer; white-space: nowrap; }
+  .dbg-row:hover { background: #22252c; }
+  .dbg-arrow { display: inline-block; width: 12px; color: var(--muted); }
+  .dbg-key { color: #9cdcfe; }
+  .dbg-count { color: var(--muted); }
+  .dbg-val { color: #ce9178; }
+  .dbg-hint { color: var(--muted); line-height: 1.6; }
+
   #api h2 { font-size: 14px; margin: 14px 0 6px; color: #fff; }
   #api h3 { font-size: 13px; margin: 12px 0 4px; color: #fff; }
   #api table { border-collapse: collapse; margin: 4px 0; }
@@ -282,10 +304,12 @@
     </div>
     <div class="tabs">
       <button data-tab="console" class="on">主控台</button>
+      <button data-tab="state" title="看遊戲現在的狀態、執行除錯指令（DEBUG_VIEW、DEBUG_COMMANDS）">狀態</button>
       <button data-tab="images">圖片</button>
       <button data-tab="api">API 說明</button>
     </div>
     <div class="tab-body" id="console"></div>
+    <div class="tab-body" id="state" hidden></div>
     <div class="tab-body" id="images" hidden>
       <div class="img-bar">
         <select id="img-select"></select>

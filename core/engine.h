@@ -35,6 +35,13 @@ const uint8_t *engine_cart_sha(void);
 int engine_check(const char *src, size_t len);
 const char *engine_check_error(void);
 
+// 開發工具用（Studio 的「狀態」分頁）：在正在執行的遊戲裡跑一段 Lua（mode 見 script.h 的 script_eval）。
+// 指令（mode 0）會改變遊戲狀態，所以正在錄的重播會停掉（之後的重播已經不是單純的輸入結果）；
+// mode 1、2 只讀值，不停。
+// 成功回傳 0；結果或錯誤訊息用 engine_eval_result() 取得
+int engine_eval(const char *src, size_t len, int mode);
+const char *engine_eval_result(void);
+
 // 平台用：每一幀呼叫一次（每秒 60 次）
 void engine_frame(void);
 

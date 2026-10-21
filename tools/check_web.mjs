@@ -561,4 +561,43 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
     else fail(name, problems.join("；"));
 }
 
+// ---- 測試 14 ----
+{
+    const name = "除錯指令（Studio 的狀態分頁）：在執行中的遊戲裡跑 Lua、讀 DEBUG_VIEW";
+    const problems = [];
+    try {
+        const engine = await loadEngine();
+        const src = "BAG = { wood = 3 }\nDEBUG_VIEW = { 'BAG', 'nope.x' }\nfunction _update() end\n";
+        load(engine, src);
+        const ev = (code, mode) => {
+            const bytes = new TextEncoder().encode(code);
+            const ptr = engine.malloc(bytes.length + 1);
+            new Uint8Array(engine.memory.buffer).set(bytes, ptr);
+            const err = engine.engine_eval(ptr, bytes.length, mode);
+            engine.free(ptr);
+            const mem = new Uint8Array(engine.memory.buffer);
+            let p = engine.engine_eval_result(), end = p;
+            while (mem[end] !== 0) end++;
+            return { ok: !err, text: new TextDecoder().decode(mem.subarray(p, end)) };
+        };
+        let r = ev("BAG.wood", 0);
+        if (!r.ok || r.text !== "3") problems.push(`算式：${r.text}`);
+        r = ev("BAG.wood = 99", 0);
+        if (!r.ok || r.text !== "（完成）") problems.push(`敘述：${r.text}`);
+        if (ev("BAG.wood", 2).text !== "99") problems.push("改了沒有生效");
+        r = ev("error('boom')", 0);
+        if (r.ok || !r.text.includes("boom")) problems.push(`錯誤：${r.text}`);
+        r = ev("", 1);
+        const lines = r.text.split("\n");
+        if (lines[0] !== "0\tBAG\tBAG\t{1}" || lines[1] !== "1\tBAG.wood\twood\t99") problems.push(`狀態樹：${JSON.stringify(lines.slice(0, 2))}`);
+        if (!lines[2] || !lines[2].includes("錯誤")) problems.push("DEBUG_VIEW 裡算錯的那一項要顯示錯誤，不能整個失敗");
+        engine.engine_frame();   // 指令出錯不能讓遊戲停掉
+        if (logs.some((l) => l.includes("boom"))) problems.push("指令的錯誤不該變成遊戲的錯誤");
+    } catch (e) {
+        problems.push(String(e));
+    }
+    if (problems.length === 0) ok(name);
+    else fail(name, problems.join("；"));
+}
+
 process.exit(failures ? 1 : 0);

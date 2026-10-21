@@ -27,4 +27,12 @@ void script_call(const char *fn);
 // 遊戲是否出錯（出錯後就不再呼叫遊戲）
 int script_failed(void);
 
+// 除錯用（Studio 的「狀態」分頁）：在正在執行的遊戲裡跑一段 Lua。
+// mode 0：執行一行指令。先試「return 指令」（算式：顯示結果），不行再當一般敘述執行
+// mode 2：和 0 一樣，但只是讀值（Studio 自己要用的，不停掉重播）
+// mode 1：讀遊戲的全域表格 DEBUG_VIEW（一串算式字串，例如 { "DAY", "party" }），
+//         把每個值攤成一行一行：「層數 \t 路徑 \t 名稱 \t 值」，表格的值是 {幾項}
+// 結果寫進 out（最多 cap byte，含結尾的 0）。成功回傳 0，出錯回傳 1（out 是錯誤訊息）
+int script_eval(const char *src, size_t len, int mode, char *out, size_t cap);
+
 #endif

@@ -208,6 +208,18 @@ export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log
             return bad ? readCString(exports, exports.engine_check_error()) : null;
         },
 
+        // 開發工具用（Studio 的「狀態」分頁）：在正在執行的遊戲裡跑一段 Lua。
+        // mode 0 = 指令（會改遊戲狀態）、1 = 讀 DEBUG_VIEW 攤成一行一行、2 = 只讀一個值。
+        // 回傳 { ok, text }：結果的文字，或錯誤訊息
+        eval(source, mode = 0) {
+            const bytes = new TextEncoder().encode(source);
+            const ptr = exports.malloc(bytes.length + 1);
+            new Uint8Array(exports.memory.buffer).set(bytes, ptr);
+            const err = exports.engine_eval(ptr, bytes.length, mode);
+            exports.free(ptr);
+            return { ok: !err, text: readCString(exports, exports.engine_eval_result()) };
+        },
+
         // 一位玩家這一幀的輸入：{ buttons, lx, ly, rx, ry }（格式見 input.js）
         setInput(player, s) {
             exports.input_set(player, s.buttons);

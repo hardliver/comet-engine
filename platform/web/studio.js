@@ -17,6 +17,7 @@ import { createImageViewer } from "./imageview.js";
 import { createMapEditor, newMapText } from "./mapedit.js";
 import { createDataEditor } from "./dataedit.js";
 import { buildFont, fontSummary } from "./font.js";
+import { createDebugPanel } from "./debugpanel.js";
 
 const STORAGE_KEY = "comet.studio.code";
 const $ = (id) => document.getElementById(id);
@@ -285,6 +286,16 @@ function getInput(player) {
 }
 const loop = startLoop(engine, canvas, getInput);
 
+// 狀態分頁：遊戲的 DEBUG_VIEW、DEBUG_COMMANDS、除錯指令（debugpanel.js）
+let lastCart = "";   // 最後一次載入的遊戲（清除存檔要知道遊戲的 id）
+const debugPanel = createDebugPanel({
+    root: $("state"),
+    engine,
+    toast: (t) => toast(t),
+    getSource: () => lastCart,
+    isVisible: () => !$("state").hidden,
+});
+
 // 圖片檢視器（下方的「圖片」分頁）：點格子複製 spr(...)
 const viewer = createImageViewer({
     select: $("img-select"),
@@ -439,6 +450,8 @@ function run() {
         return;
     }
     const err = engine.load(code);
+    lastCart = code;
+    debugPanel.reset();
     if (!err) consoleAdd("▶ 遊戲已重新開始", "info");
     if (fontInfo) consoleAdd(fontInfo, "info");
     if (folder && folder.project.output) writeOutput();

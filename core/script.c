@@ -532,6 +532,126 @@ int script_failed(void)
 }
 
 // ============================================================
+// 除錯：在執行中的遊戲裡跑 Lua（Studio 的「狀態」分頁）
+// ============================================================
+// 幫手寫成 Lua：把值變成文字（指令結果用一行、狀態用樹狀的好幾行）。
+// 每次呼叫時才編譯，不放進遊戲的全域變數，遊戲看不到它。
+// 第 3 個參數 compile 是 C 提供的「編譯一段文字」，不靠遊戲的 load（遊戲可能把它蓋掉）
+
+static const char DBG_LUA[] =
+    "local mode, src, compile = ...\n"
+    "local function lit(v)\n"
+    "  if type(v) == 'string' then return (string.format('%q', v):gsub('\\\\\\n', '\\\\n')) end\n"
+    "  return tostring(v)\n"
+    "end\n"
+    "local function sorted(t)\n"
+    "  local ks = {}\n"
+    "  for k in pairs(t) do ks[#ks + 1] = k end\n"
+    "  table.sort(ks, function(a, b)\n"
+    "    local ta, tb = type(a), type(b)\n"
+    "    if ta ~= tb then return ta < tb end\n"
+    "    if ta == 'number' or ta == 'string' then return a < b end\n"
+    "    return tostring(a) < tostring(b)\n"
+    "  end)\n"
+    "  return ks\n"
+    "end\n"
+    "local function keypath(k)\n"
+    "  if type(k) == 'string' and k:match('^[%a_][%w_]*$') then return '.' .. k, k end\n"
+    "  local s = '[' .. lit(k) .. ']'\n"
+    "  return s, s\n"
+    "end\n"
+    "local function count(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n end\n"
+    "local function short(v, depth)\n"
+    "  if type(v) ~= 'table' then return lit(v) end\n"
+    "  if depth >= 2 then return '{…' .. count(v) .. '}' end\n"
+    "  local parts, n = {}, 0\n"
+    "  for _, k in ipairs(sorted(v)) do\n"
+    "    n = n + 1\n"
+    "    if n > 12 then parts[#parts + 1] = '…'; break end\n"
+    "    local _, label = keypath(k)\n"
+    "    parts[#parts + 1] = label .. ' = ' .. short(v[k], depth + 1)\n"
+    "  end\n"
+    "  return '{ ' .. table.concat(parts, ', ') .. ' }'\n"
+    "end\n"
+    "if mode ~= 1 then\n"
+    "  local f = compile('return ' .. src)\n"
+    "  if not f then\n"
+    "    local err\n"
+    "    f, err = compile(src)\n"
+    "    if not f then error(err, 0) end\n"
+    "  end\n"
+    "  local r = table.pack(f())\n"
+    "  if r.n == 0 then return '（完成）' end\n"
+    "  local parts = {}\n"
+    "  for i = 1, r.n do parts[i] = short(r[i], 0) end\n"
+    "  return table.concat(parts, '\\t')\n"
+    "end\n"
+    "local out, lines = {}, 0\n"
+    "local LIMIT = 500\n"
+    "local function tree(v, path, label, depth, seen)\n"
+    "  lines = lines + 1\n"
+    "  if lines > LIMIT then return end\n"
+    "  if type(v) == 'table' then\n"
+    "    out[#out + 1] = depth .. '\\t' .. path .. '\\t' .. label .. '\\t{' .. count(v) .. '}'\n"
+    "    if seen[v] or depth >= 6 then return end\n"
+    "    seen[v] = true\n"
+    "    for _, k in ipairs(sorted(v)) do\n"
+    "      local p, l = keypath(k)\n"
+    "      tree(v[k], path .. p, l, depth + 1, seen)\n"
+    "    end\n"
+    "    seen[v] = nil\n"
+    "  else\n"
+    "    out[#out + 1] = depth .. '\\t' .. path .. '\\t' .. label .. '\\t' .. lit(v)\n"
+    "  end\n"
+    "end\n"
+    "local view = rawget(_G, 'DEBUG_VIEW')\n"
+    "if type(view) ~= 'table' then return '' end\n"
+    "for _, expr in ipairs(view) do\n"
+    "  local f, err = compile('return ' .. expr)\n"
+    "  local ok, v = false, err\n"
+    "  if f then ok, v = pcall(f) end\n"
+    "  if ok then tree(v, expr, expr, 0, {})\n"
+    "  else out[#out + 1] = '0\\t' .. expr .. '\\t' .. expr .. '\\t（錯誤：' .. tostring(v) .. '）' end\n"
+    "end\n"
+    "if lines > LIMIT then out[#out + 1] = '0\\t\\t…\\t（太多了，只顯示前 ' .. LIMIT .. ' 行）' end\n"
+    "return table.concat(out, '\\n')\n";
+
+// compile(文字)：編譯一段 Lua，成功回傳函式，失敗回傳 nil, 錯誤訊息
+static int l_dbg_compile(lua_State *L)
+{
+    size_t len;
+    const char *s = luaL_checklstring(L, 1, &len);
+    if (luaL_loadbufferx(L, s, len, "=除錯", "t") != LUA_OK) {
+        lua_pushnil(L);
+        lua_insert(L, -2);
+        return 2;
+    }
+    return 1;
+}
+
+int script_eval(const char *src, size_t len, int mode, char *out, size_t cap)
+{
+    if (L == NULL) {
+        snprintf(out, cap, "遊戲還沒有執行");
+        return 1;
+    }
+    int top = lua_gettop(L);
+    if (luaL_loadbufferx(L, DBG_LUA, sizeof(DBG_LUA) - 1, "=除錯幫手", "t") != LUA_OK) {
+        snprintf(out, cap, "%s", lua_tostring(L, -1));
+        lua_settop(L, top);
+        return 1;
+    }
+    lua_pushinteger(L, mode);
+    lua_pushlstring(L, src, len);
+    lua_pushcfunction(L, l_dbg_compile);
+    int r = lua_pcall(L, 3, 1, 0);
+    const char *s = lua_tostring(L, -1);
+    snprintf(out, cap, "%s", s != NULL ? s : (r == LUA_OK ? "" : "（沒有錯誤訊息）"));
+    lua_settop(L, top);
+    return r != LUA_OK;
+}
+
+// ============================================================
 // 4. Lua 的輸出導向（comet_lua_user.h 裡設定）
 // ============================================================
 // print("a", "b") 會分好幾次呼叫 comet_lua_write：

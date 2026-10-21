@@ -87,6 +87,19 @@ const char *engine_check_error(void)
     return check_error;
 }
 
+static char eval_result[16384];
+
+int engine_eval(const char *src, size_t len, int mode)
+{
+    if (mode == 0) replay_stop();
+    return script_eval(src, len, mode, eval_result, sizeof(eval_result));
+}
+
+const char *engine_eval_result(void)
+{
+    return eval_result;
+}
+
 void engine_frame(void)
 {
     // 回 HOME 的按鍵：看的是玩家真正按的鍵，所以在重播蓋掉輸入之前
