@@ -236,6 +236,22 @@ int gfx_image_w(int img) { Image *im = get_image(img); return im ? im->w : 0; }
 int gfx_image_h(int img) { Image *im = get_image(img); return im ? im->h : 0; }
 int gfx_image_tile(int img) { Image *im = get_image(img); return im ? im->tile : 0; }
 
+// 圖片某個範圍裡用到哪些顏色（不含透明的 0）：used[c] = 1。範圍超出圖片的部分不算
+void gfx_image_colors(int img, int sx, int sy, int w, int h, uint8_t used[256])
+{
+    memset(used, 0, 256);
+    Image *im = get_image(img);
+    if (im == NULL) return;
+    for (int y = sy; y < sy + h; y++) {
+        if (y < 0 || y >= im->h) continue;
+        for (int x = sx; x < sx + w; x++) {
+            if (x < 0 || x >= im->w) continue;
+            uint8_t c = im->pixels[y * im->w + x];
+            if (c != 0) used[c] = 1;
+        }
+    }
+}
+
 void gfx_sspr(int img, int sx, int sy, int sw, int sh,
               int dx, int dy, int dw, int dh, int flip_x, int flip_y)
 {

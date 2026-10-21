@@ -629,7 +629,7 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
 
 // ---- 測試 16 ----
 {
-    const name = "繪圖用的顏色替換 dpal、讀調色盤 palget";
+    const name = "繪圖用的顏色替換 dpal、讀調色盤 palget、圖片用到的顏色 imgcolors";
     const problems = [];
     try {
         const engine = await loadEngine();
@@ -641,6 +641,10 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
         const got = [mem[fb], mem[fb + 4], mem[fb + 8], mem[fb + 12]].join(",");
         if (got !== "11,8,12,2") problems.push(`畫出來的顏色 ${got}，應該是 11,8,12,2`);
         if (!logs.includes("255,0,77")) problems.push("palget(8) 應該是 255,0,77（PICO-8 的紅）");
+        // imgcolors：2×2 的圖，用了 0（透明）、16、17
+        load(engine, "local img = newimage(2, 2, \"EAAREA==\") print(table.concat(imgcolors(img), ',')) print(#imgcolors(img, 1, 0, 1, 1))\n");
+        if (!logs.includes("16,17")) problems.push("imgcolors 應該是 16,17");
+        if (!logs.includes("0")) problems.push("imgcolors 只看透明的那一格應該是空的");
     } catch (e) {
         problems.push(String(e));
     }

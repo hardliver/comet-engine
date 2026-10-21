@@ -28,6 +28,8 @@ void gfx_cls(uint8_t color);
 // 繪圖用的顏色替換（見 gfx.c 的 dmap）：之後畫的顏色 from 換成 to；reset 全部還原。不影響 cls、bg
 void gfx_dpal(int from, int to);
 void gfx_dpal_reset(void);
+// 圖片某個範圍裡用到哪些顏色（不含透明的 0）：used[c] = 1
+void gfx_image_colors(int img, int sx, int sy, int w, int h, uint8_t used[256]);
 // 調色盤第 index 號的顏色（pal 設的原色，不含 paltint 的染色）
 void gfx_palget(int index, uint8_t *r, uint8_t *g, uint8_t *b);
 

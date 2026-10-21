@@ -200,6 +200,28 @@ static int l_palget(lua_State *L)
     return 3;
 }
 
+// imgcolors(圖, sx, sy, w, h)：這個範圍用到哪些顏色，回傳由小到大的陣列（不含透明的 0）。
+// 範圍省略就是整張圖。用途：做換色（dpal）的對照表前，先知道要換哪些顏色
+static int l_imgcolors(lua_State *L)
+{
+    int img = (int)luaL_checkinteger(L, 1);
+    int sx = (int)luaL_optinteger(L, 2, 0);
+    int sy = (int)luaL_optinteger(L, 3, 0);
+    int w = (int)luaL_optinteger(L, 4, 1 << 20);
+    int h = (int)luaL_optinteger(L, 5, 1 << 20);
+    uint8_t used[256];
+    gfx_image_colors(img, sx, sy, w, h, used);
+    lua_newtable(L);
+    int n = 0;
+    for (int c = 1; c < 256; c++) {
+        if (used[c]) {
+            lua_pushinteger(L, c);
+            lua_rawseti(L, -2, ++n);
+        }
+    }
+    return 1;
+}
+
 // camera(x, y)：之後的繪圖都往左上平移 (x, y)；camera() 歸零
 static int l_camera(lua_State *L)
 {
@@ -453,6 +475,7 @@ static const luaL_Reg api[] = {
     { "pal",      l_pal      },
     { "dpal",     l_dpal     },
     { "palget",   l_palget   },
+    { "imgcolors", l_imgcolors },
     { "camera",   l_camera   },
     { "newimage", l_newimage },
     { "spr",      l_spr      },
