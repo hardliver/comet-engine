@@ -284,7 +284,7 @@ function getInput(player) {
     if (player === 0) return merge(keyboard(), readGamepad(0));
     return readGamepad(player);
 }
-// 運算預算（Studio 清單 6）：每幀記下預估的 Pico 負載，狀態列顯示最近 2 秒的平均和最高
+// 運算預算（Studio 清單 6）：每幀記下預估的 Pico 負載，狀態列顯示最近 2 秒的持續負載和瞬間尖峰
 engine.profile(true);
 const budget = { loads: new Array(120).fill(0), i: 0, worst: null };
 function recordBudget() {
@@ -472,17 +472,27 @@ setInterval(() => {
     const speed = loop.speed();
     $("frame-count").textContent = `${paused ? "⏸ " : ""}${speed > 1 ? `⏩ ×${speed}　` : ""}第 ${engine.frameCount()} 幀`;
     $("frame-count").className = paused ? "" : (speed > 1 ? "playing fast" : "playing");
-    // 運算預算：最近 2 秒最高的那一幀
-    const max = Math.max(...budget.loads);
-    const avg = budget.loads.reduce((a, b) => a + b, 0) / budget.loads.length;
+    // 運算預算：最近 2 秒
+    //   持續負載 = 連續 3 幀都至少這麼重的最高值（長條、顏色看這個）
+    //   瞬間尖峰 = 單獨一幀的最高值（換地圖、開戰那一幀在載入，Pico 上只是掉一幀，通常在轉場黑畫面時，看不出來）
+    // 2026-10-22 Neil：每次切換畫面都跳到 100% 以上，看起來很嚇人 → 尖峰另外標，不算進紅色
+    const L = budget.loads, n = L.length;
+    let sustained = 0;
+    for (let i = 0; i < n; i++) sustained = Math.max(sustained, Math.min(L[i], L[(i + n - 1) % n], L[(i + n - 2) % n]));
+    const max = Math.max(...L);
+    const avg = L.reduce((a, b) => a + b, 0) / n;
+    const spike = max > 1000 && max > sustained + 50;
     const el = $("budget");
-    el.querySelector(".budget-fill").style.width = `${Math.min(100, max / 10)}%`;
-    el.querySelector(".budget-text").textContent = `Pico ${Math.round(max / 10)}%`;
-    el.className = max > 1000 ? "over" : (max > 800 ? "warn" : "");
+    el.querySelector(".budget-fill").style.width = `${Math.min(100, sustained / 10)}%`;
+    el.querySelector(".budget-text").textContent = `Pico ${Math.round(sustained / 10)}%` + (spike ? `（瞬間 ${Math.round(max / 10)}%）` : "");
+    el.className = sustained > 1000 ? "over" : (sustained > 800 ? "warn" : "");
     const w = budget.worst;
-    el.title = "運算預算（Level 1 = Pico 2 的預估）：最近 2 秒最高 " + (max / 10).toFixed(1) + "%、平均 " + (avg / 10).toFixed(1) + "%\n" +
+    el.title = "運算預算（Level 1 = Pico 2 的預估），最近 2 秒：\n" +
+        "持續負載 " + (sustained / 10).toFixed(1) + "%（連續 3 幀以上）、平均 " + (avg / 10).toFixed(1) + "%、最重的單獨一幀 " + (max / 10).toFixed(1) + "%\n" +
         (w ? `最重的一幀（第 ${w.frame} 幀）：Lua ${w.instr.toLocaleString()} 個指令、畫了 ${w.pixels.toLocaleString()} 個像素、${w.calls} 次繪圖呼叫\n` : "") +
-        "超過 100% 代表在 Pico 上這一幀會來不及（掉幀）。係數是估計值，硬體到了再用實機校正。";
+        "持續負載超過 100% 代表在 Pico 上會一直掉幀（變慢），要修。\n" +
+        "「瞬間」只有一兩幀超過，通常是換地圖、開戰的載入：在 Pico 上只是那一下掉一幀，沒關係。\n" +
+        "係數是估計值，硬體到了再用實機校正。";
 }, 200);
 
 // 點遊戲畫面 → 鍵盤控制遊戲；點程式碼 → 鍵盤打字
