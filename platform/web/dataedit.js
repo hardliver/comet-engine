@@ -6,7 +6,7 @@
 //         每一列是一筆、每一欄是一個欄位；整數欄只能填整數，"type" 欄是屬性的下拉選單，
 //         "species" 欄是野伴的下拉選單（專案裡有 types、species 資料檔時），
 //         表格、陣列類的欄位用一行 JSON 填。填錯的格子變紅，不會存檔
-//   遭遇表：每一筆有 rate 和 list（[{ species, min, max, weight }]），例如 encounters.json。
+//   遭遇表：每一筆有 rate 和 list（[{ species, min, max, weight, times?, seasons?, weather? }]），例如 encounters.json。
 //     每隻可以另外有 times（時段 → 改用的權重）、seasons（季節 → 權重乘幾倍），用一行 JSON 編輯；
 //     有用到 times 的區域，下面多一張「各時段出現機率」（2026-10-22 Neil：原本看不到時段的設定）
 //         專用畫面：遇敵率直接換算成每格的 %，每隻野伴旁邊算出出現的機率
@@ -278,9 +278,41 @@ export function createDataEditor({ root, onChange, toast }) {
     }
 
     // ---------- 遭遇表 ----------
-    // 常見的時段代號顯示成中文（其他的照原樣顯示）
+    // 每一筆：野伴、等級、權重；時段（四格：那個時段改用的權重，空白 = 用「權重」）；
+    // 季節、天氣（一行 JSON：那一季／那種天氣乘幾倍，0 = 不出現）。
+    // 最上面選季節、天氣，每區下面的「出現機率」表顯示每個時段的機率（2026-10-22 Neil：要看得到時段、天氣怎麼影響）
+    // 常見的代號顯示成中文（其他的照原樣顯示）
     const PERIOD_NAMES = { morning: "早上", day: "白天", evening: "傍晚", night: "晚上" };
+    const SEASON_NAMES = { spring: "春", summer: "夏", autumn: "秋", winter: "冬" };
+    const WEATHER_NAMES = { sunny: "晴天", cloudy: "陰天", rain: "下雨", fog: "起霧", storm: "雷雨", snow: "下雪" };
+    const cond = { season: "", weather: "" };   // 機率表的條件（所有區域共用）
+    function keysOf(list, field, known) {
+        const keys = Object.keys(known);
+        for (const e of list) for (const k of Object.keys(e[field] || {})) if (!keys.includes(k)) keys.push(k);
+        return keys;
+    }
     function renderEncounters() {
+        const all = order.filter((k) => k in data).flatMap((k) => data[k].list);
+        const periods = keysOf(all, "times", PERIOD_NAMES);
+        const seasons = keysOf(all, "seasons", SEASON_NAMES);
+        const weathers = keysOf(all, "weather", WEATHER_NAMES);
+        const nameOf = (names, k) => names[k] || k;
+
+        const bar = el("div", "de-area-head");
+        bar.appendChild(el("span", null, "出現機率的條件："));
+        const pickSel = (label, keys, names, key) => {
+            const sel = el("select");
+            const none = el("option", null, label + "：不考慮"); none.value = ""; sel.appendChild(none);
+            for (const k of keys) { const o = el("option", null, label + "：" + nameOf(names, k)); o.value = k; sel.appendChild(o); }
+            sel.value = cond[key];
+            sel.addEventListener("change", () => { cond[key] = sel.value; render(); });
+            bar.appendChild(sel);
+        };
+        pickSel("季節", seasons, SEASON_NAMES, "season");
+        pickSel("天氣", weathers, WEATHER_NAMES, "weather");
+        bar.appendChild(el("span", "de-muted", "（室內地圖沒有天氣，遊戲裡不會乘天氣倍數）"));
+        main.appendChild(bar);
+
         for (const area of order.filter((k) => k in data)) {
             const t = data[area];
             const box = el("div", "de-area");
@@ -293,55 +325,77 @@ export function createDataEditor({ root, onChange, toast }) {
             h.appendChild(pct);
             box.appendChild(h);
             const table = el("table", "de-table");
-            table.innerHTML = "<tr><th>野伴</th><th>最低等級</th><th>最高等級</th><th>權重</th><th>出現機率</th>" +
-                "<th title='某個時段改用的權重，例如 {\"night\":60,\"day\":15}；0 = 那個時段不出現；空白 = 整天都用「權重」'>時段（改用的權重）</th>" +
-                "<th title='某一季權重乘幾倍，例如 {\"autumn\":2}；空白 = 每季一樣'>季節（倍數）</th><th></th></tr>";
-            const pctCells = [];
-            const timeBox = el("div");
+            table.innerHTML = "<tr><th>野伴</th><th>最低等級</th><th>最高等級</th><th title='時段、季節、天氣都沒特別設定時用的權重'>權重</th>" +
+                periods.map((k) => `<th title='這個時段改用的權重；空白 = 用「權重」；0 = 這個時段不出現'>${nameOf(PERIOD_NAMES, k)}</th>`).join("") +
+                "<th title='某一季權重乘幾倍，例如 {\"autumn\":2}；空白 = 每季一樣'>季節（倍數）</th>" +
+                "<th title='某種天氣權重乘幾倍，例如 {\"rain\":3}；0 = 那種天氣不出現；空白 = 不受天氣影響'>天氣（倍數）</th><th></th></tr>";
+            const probBox = el("div");
+            const weightAt = (e, p) => {
+                let w = (e.times && p in e.times) ? e.times[p] : (e.weight || 0);
+                if (cond.season && e.seasons && cond.season in e.seasons) w *= e.seasons[cond.season];
+                if (cond.weather && e.weather && cond.weather in e.weather) w *= e.weather[cond.weather];
+                return w;
+            };
             function renderPct() {
                 pct.textContent = `/256，每走一格 ${(t.rate / 2.56).toFixed(1)}%（大約每 ${t.rate > 0 ? Math.round(256 / t.rate) : "∞"} 格遇一次）`;
-                const total = t.list.reduce((s, e) => s + (e.weight || 0), 0);
-                t.list.forEach((e, i) => { if (pctCells[i]) pctCells[i].textContent = total ? ((e.weight / total) * 100).toFixed(1) + "%" : "—"; });
-                renderTimes();
+                renderProb();
             }
-            // 各時段出現機率：只有這個區域有人設 times 才畫
-            function renderTimes() {
-                timeBox.innerHTML = "";
-                const keys = [];
-                for (const e of t.list) for (const k of Object.keys(e.times || {})) if (!keys.includes(k)) keys.push(k);
-                if (keys.length === 0) return;
-                const known = Object.keys(PERIOD_NAMES);
-                const periods = [...known, ...keys.filter((k) => !known.includes(k))];
+            function renderProb() {
+                probBox.innerHTML = "";
                 const tt = el("table", "de-table");
                 tt.style.marginTop = "6px";
-                tt.innerHTML = "<tr><th>各時段出現機率</th>" + periods.map((k) => `<th>${PERIOD_NAMES[k] || k}</th>`).join("") + "</tr>";
-                const w = (e, k) => (e.times && k in e.times) ? e.times[k] : (e.weight || 0);
-                const totals = periods.map((k) => t.list.reduce((s, e) => s + w(e, k), 0));
+                const label = ["出現機率", cond.season && nameOf(SEASON_NAMES, cond.season), cond.weather && nameOf(WEATHER_NAMES, cond.weather)].filter(Boolean).join("・");
+                tt.innerHTML = `<tr><th>${label}</th>` + periods.map((k) => `<th>${nameOf(PERIOD_NAMES, k)}</th>`).join("") + "</tr>";
+                const totals = periods.map((p) => t.list.reduce((s, e) => s + weightAt(e, p), 0));
                 for (const e of t.list) {
                     const tr = el("tr");
                     tr.appendChild(el("td", null, (refs.species && refs.species[e.species]) || e.species));
-                    periods.forEach((k, j) => {
-                        const v = totals[j] ? (w(e, k) / totals[j]) * 100 : 0;
+                    periods.forEach((p, j) => {
+                        const v = totals[j] ? (weightAt(e, p) / totals[j]) * 100 : 0;
                         const td = el("td", v === 0 ? "de-muted" : null, v === 0 ? "—" : v.toFixed(1) + "%");
-                        if (e.times && k in e.times) td.style.color = "var(--accent)";
+                        const special = (e.times && p in e.times) ||
+                            (cond.season && e.seasons && cond.season in e.seasons) || (cond.weather && e.weather && cond.weather in e.weather);
+                        if (special) td.style.color = "var(--accent)";
                         tr.appendChild(td);
                     });
                     tt.appendChild(tr);
                 }
-                timeBox.appendChild(tt);
-                timeBox.appendChild(el("div", "de-muted", "橘色 = 這個時段有特別設定。季節倍數另外再乘。"));
+                probBox.appendChild(tt);
+                probBox.appendChild(el("div", "de-muted", "橘色 = 這一格有特別設定（時段、季節或天氣）。"));
             }
-            // 可以省略的一行 JSON 欄位（空白 = 刪掉這個欄位）
+            function timeInput(e, p) {
+                const input = el("input", "de-num");
+                input.value = (e.times && p in e.times) ? String(e.times[p]) : "";
+                input.placeholder = String(e.weight ?? "");
+                input.addEventListener("change", () => {
+                    const v = input.value.trim();
+                    if (v === "") {
+                        if (e.times) { delete e.times[p]; if (Object.keys(e.times).length === 0) delete e.times; }
+                    } else {
+                        const n = Number(v);
+                        if (!Number.isInteger(n) || n < 0) { input.classList.add("bad"); status(`${nameOf(PERIOD_NAMES, p)}：要填 0 以上的整數`, true); return; }
+                        e.times = e.times || {};
+                        e.times[p] = n;
+                    }
+                    input.classList.remove("bad");
+                    status("");
+                    renderPct();
+                    commit();
+                });
+                return input;
+            }
             function optJson(e, key) {
                 const input = el("input", "de-json");
+                input.style.width = "150px";
                 input.value = e[key] ? oneLine(e[key]) : "";
                 input.placeholder = "—";
+                input.title = input.value;
                 input.addEventListener("change", () => {
                     const v = input.value.trim();
                     if (v === "") { delete e[key]; input.classList.remove("bad"); renderPct(); commit(); return; }
                     try {
                         const o = JSON.parse(v);
-                        if (!isObj(o) || !Object.values(o).every((x) => Number.isFinite(x) && x >= 0)) throw new Error("要寫成 {\"night\": 60} 這樣：名稱對到 0 以上的數字");
+                        if (!isObj(o) || !Object.values(o).every((x) => Number.isInteger(x) && x >= 0)) throw new Error("要寫成 {\"rain\": 3} 這樣：名稱對到 0 以上的整數");
                         e[key] = o;
                         input.classList.remove("bad");
                         status("");
@@ -357,15 +411,13 @@ export function createDataEditor({ root, onChange, toast }) {
             t.list.forEach((e, i) => {
                 const tr = el("tr");
                 const cell = (node) => { const td = el("td"); td.appendChild(node); tr.appendChild(td); };
-                cell(cellInput(e.species, (v) => { e.species = v; }, { choices: refs.species }));
+                cell(cellInput(e.species, (v) => { e.species = v; renderPct(); }, { choices: refs.species }));
                 cell(cellInput(e.min, (v) => { e.min = v; }));
                 cell(cellInput(e.max, (v) => { e.max = v; }));
-                cell(cellInput(e.weight, (v) => { e.weight = v; renderPct(); }));
-                const p = el("td", "de-muted");
-                pctCells[i] = p;
-                tr.appendChild(p);
-                cell(optJson(e, "times"));
+                cell(cellInput(e.weight, (v) => { e.weight = v; render(); }));
+                for (const p of periods) cell(timeInput(e, p));
                 cell(optJson(e, "seasons"));
+                cell(optJson(e, "weather"));
                 const del = el("button", null, "✕");
                 del.addEventListener("click", () => { t.list.splice(i, 1); render(); commit(); });
                 const td = el("td"); td.appendChild(del); tr.appendChild(td);
@@ -375,12 +427,12 @@ export function createDataEditor({ root, onChange, toast }) {
             const add = el("button", null, "＋ 加一隻");
             add.addEventListener("click", () => {
                 const last = t.list[t.list.length - 1];
-                t.list.push(last ? { ...last } : { species: Object.keys(refs.species || { "01": 1 })[0], min: 2, max: 4, weight: 10 });
+                t.list.push(last ? JSON.parse(JSON.stringify(last)) : { species: Object.keys(refs.species || { "01": 1 })[0], min: 2, max: 4, weight: 10 });
                 render();
                 commit();
             });
             box.appendChild(add);
-            box.appendChild(timeBox);
+            box.appendChild(probBox);
             main.appendChild(box);
             renderPct();
         }
