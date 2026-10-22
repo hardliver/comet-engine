@@ -47,6 +47,11 @@ const OBJECT_TYPES = {
     fire:  { label: "營火（傳送點）", mark: "火", color: "#ff6c24", fields: [] },
     raft:  { label: "木筏（灌溉渡水）", mark: "筏", color: "#1d2b53", fields: [
         ["to", "到哪張地圖", "map"], ["tx", "到達第幾欄", "int"], ["ty", "到達第幾列", "int"]] },
+    lift:  { label: "升降梯／電梯", mark: "梯", color: "#5f574f", fields: [
+        ["to", "到哪張地圖", "map"], ["tx", "到達第幾欄", "int"], ["ty", "到達第幾列", "int"],
+        ["face", "到了面向哪邊（up／down）", "text"], ["need", "要會這項工作的野伴（例如 power）", "text"],
+        ["flag", "要有這個劇情旗標才開", "text"], ["scene", "第一次搭之前的劇本編號", "text"]] },
+    console: { label: "控制台（生產線）", mark: "控", color: "#008751", fields: [["line", "哪一條線（wood／ore／light）", "text"]] },
     event: { label: "事件（劇情）", mark: "事", color: "#7e2553", fields: [["scene", "劇本編號（SCENE 表格的名字）", "text"]] },
 };
 
