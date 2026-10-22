@@ -63,7 +63,7 @@
     grid-template-columns: minmax(0, 1fr) minmax(340px, 660px);
     min-height: 0;
   }
-  .code { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+  .code { display: flex; flex-direction: row; min-height: 0; border-right: 1px solid var(--line); }
   #editor { flex: 1; min-height: 0; overflow: hidden; }
   #project-name { color: var(--accent); font-weight: 600; }
 
@@ -126,28 +126,49 @@
   .single-only { display: contents; }
   body.folder-mode .single-only { display: none; }
 
-  /* 資料夾模式：檔案分頁 */
+  /* 資料夾模式：左邊檔案總管＋上面「開著的檔案」分頁（2026-10-22：檔案一多，原本全部攤成分頁會擠掉編輯區） */
+  .code-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  #explorer {
+    width: 190px; flex: none; display: flex; flex-direction: column; min-height: 0;
+    border-right: 1px solid var(--line); background: #1b1d22; font-size: 12px;
+  }
+  #explorer[hidden] { display: none; }
+  .ex-head { display: flex; gap: 4px; padding: 6px; border-bottom: 1px solid var(--line); }
+  .ex-head input { flex: 1; min-width: 0; background: #23262d; color: var(--fg); border: 1px solid #30343c;
+                   border-radius: 4px; padding: 3px 6px; font-size: 12px; }
+  .ex-head button { padding: 2px 6px; }
+  #ex-list { flex: 1; overflow: auto; padding: 4px 0 12px; }
+  .ex-group { display: flex; align-items: center; gap: 4px; padding: 6px 8px 3px; color: var(--muted);
+              cursor: pointer; user-select: none; font-weight: 600; }
+  .ex-group .ex-count { font-weight: 400; opacity: 0.7; }
+  .ex-group .ex-add { margin-left: auto; border: none; background: none; color: var(--accent); padding: 0 4px; font-size: 14px; }
+  .ex-item { display: block; width: 100%; text-align: left; border: none; border-radius: 0; background: none;
+             color: var(--fg); padding: 3px 8px 3px 22px; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ex-item:hover { background: #262a31; }
+  .ex-item.on { background: #2f3542; color: #fff; }
+  .ex-item.open:not(.on) { color: #cfd6e4; }
+  .ex-item.dirty::after { content: " ●"; color: var(--accent); }
+  .ex-empty { padding: 6px 12px; color: var(--muted); }
+
+  /* 開著的檔案：一行，放不下就左右捲 */
   #files {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px;
-    padding: 6px 8px 0;
-    border-bottom: 1px solid var(--line);
-    background: var(--bg);
+    display: flex; flex-wrap: nowrap; align-items: flex-end; gap: 2px;
+    padding: 6px 8px 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+    border-bottom: 1px solid var(--line); background: var(--bg);
   }
   #files[hidden] { display: none; }
-  #files button {
-    border: none;
-    border-radius: 6px 6px 0 0;
-    background: none;
-    color: var(--muted);
-    font-family: ui-monospace, Menlo, monospace;
-    font-size: 12px;
-    padding: 6px 10px;
+  #files .ftab {
+    flex: none; display: inline-flex; align-items: center; gap: 2px;
+    border-radius: 6px 6px 0 0; color: var(--muted); padding: 0 2px 0 0;
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: nowrap;
   }
-  #files button.on { background: #282c34; color: #fff; }
-  #files button.dirty::after { content: " ●"; color: var(--accent); }
-  #files button.add { color: var(--accent); }
+  #files .ftab.on { background: #282c34; color: #fff; }
+  #files .ftab button { border: none; background: none; color: inherit; font: inherit; padding: 6px 4px 6px 10px; }
+  #files .ftab .x { padding: 2px 5px; border-radius: 4px; opacity: 0.5; }
+  #files .ftab .x:hover { opacity: 1; background: #3a3f4b; }
+  #files .ftab.dirty .name::after { content: " ●"; color: var(--accent); }
+  #files .ex-toggle { flex: none; border: none; background: none; color: var(--muted); padding: 6px 8px; }
   #editor .cm-editor { height: 100%; }
   #editor .cm-scroller { font-size: 14px; }
   .cm-error-line { background: rgba(255, 92, 108, 0.18) !important; }
@@ -268,6 +289,7 @@
     .side { order: -1; }
     .code { border-right: none; border-top: 1px solid var(--line); }
     .tab-body { max-height: 30vh; }
+    #explorer { width: 150px; }
   }
 </style>
 </head>
@@ -302,11 +324,20 @@
 
 <main>
   <div class="code">
+    <nav id="explorer" hidden>
+      <div class="ex-head">
+        <input id="ex-filter" placeholder="找檔案（⌘P）" spellcheck="false">
+        <button id="ex-hide" title="收起檔案總管（⌘B）">«</button>
+      </div>
+      <div id="ex-list"></div>
+    </nav>
+    <div class="code-main">
     <div id="files" hidden></div>
     <div id="editor"></div>
     <div id="mapedit" hidden></div>
     <div id="dataedit" hidden></div>
     <div id="syntax-msg" hidden title="點一下跳到那一行"></div>
+    </div>
   </div>
   <div class="side">
     <div class="screen-wrap">

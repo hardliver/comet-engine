@@ -697,19 +697,25 @@ async function openFolder(dir) {
 
     folder = { dir, project, projectMod, files, images, imagesCode: "", maps, mapsCode: "", mapsError: null,
                data, dataCode: "", dataError: null,
-               fontText: fontTextCode(fontTexts), current: null, segments: [] };
+               fontText: fontTextCode(fontTexts), current: null, segments: [], open: [], collapsed: {} };
+    const ui = loadUi();
+    folder.open = Array.isArray(ui.open) ? ui.open : [];
+    folder.collapsed = ui.collapsed || {};
     await rebuildImages();
     await rebuildMaps();
     await rebuildData();
     await loadPak();
     document.body.classList.add("folder-mode");
     $("files").hidden = false;
+    $("explorer").hidden = ui.explorer === false || window.innerWidth < 700;
     $("project-name").textContent = project.name || dir.name;
     $("btn-reopen").hidden = true;
     rememberFolder(dir);
 
-    // 預設打開 main.lua（通常是最後一個）
-    await openFile(project.sources[project.sources.length - 1]);
+    // 上次開著的檔案；沒有的話打開 main.lua（通常是最後一個）
+    const last = folder.open.filter(fileExists);
+    const first = fileExists(ui.current || "") ? ui.current : (last.length ? last[last.length - 1] : project.sources[project.sources.length - 1]);
+    await openFile(first);
     run();
 }
 
@@ -739,44 +745,158 @@ async function openFile(path) {
     showErrorMark();
 }
 
+// ---- 檔案總管＋開著的檔案（2026-10-22 Neil：檔案一多，全部攤成分頁會擠掉編輯區）----
+// 左邊：全部檔案，依種類分組（程式／地圖／資料），可以收合、可以打字篩選（⌘P）；整個總管可以收起（⌘B）
+// 上面：只放打開過的檔案（folder.open），一行、放不下就捲動，× 關掉
+// 開著哪些、收合狀態記在 localStorage（每個專案分開）
+const UI_KEY = () => "comet-studio-ui:" + (folder.project.name || folder.dir.name);
+function loadUi() {
+    try { return JSON.parse(localStorage.getItem(UI_KEY())) || {}; } catch (e) { return {}; }
+}
+function saveUi() {
+    if (!folder) return;
+    try {
+        localStorage.setItem(UI_KEY(), JSON.stringify({
+            open: folder.open, current: folder.current, collapsed: folder.collapsed, explorer: !$("explorer").hidden }));
+    } catch (e) {}
+}
+const fileExists = (p) => folder.files.has(p) || folder.maps.has(p) || folder.data.has(p);
+function fileLabel(path) {
+    if (folder.maps.has(path)) return "🗺 " + path.replace(/^maps\//, "");
+    if (folder.data.has(path)) return "📋 " + path.replace(/^data\//, "");
+    return path.replace(/^src\//, "");
+}
+function fileDirty(path) {
+    const f = folder.files.get(path) || folder.maps.get(path) || folder.data.get(path);
+    return !!(f && f.dirty);
+}
+
+function closeFile(path) {
+    const i = folder.open.indexOf(path);
+    if (i < 0) return;
+    if (folder.open.length === 1) { toast("至少要開著一個檔案"); return; }
+    folder.open.splice(i, 1);
+    if (path === folder.current) openFile(folder.open[Math.min(i, folder.open.length - 1)]);
+    else renderTabs();
+}
+
+function setExplorer(show) {
+    $("explorer").hidden = !show;
+    saveUi();
+    renderTabs();
+}
+
 function renderTabs() {
+    if (!folder) return;
+    folder.open = (folder.open || []).filter(fileExists);
+    if (folder.current && fileExists(folder.current) && !folder.open.includes(folder.current)) folder.open.push(folder.current);
+
+    // 上面：開著的檔案
     const bar = $("files");
     bar.innerHTML = "";
-    for (const [path, f] of folder.files) {
-        const b = document.createElement("button");
-        b.textContent = path.replace(/^src\//, "");
-        b.title = path;
-        b.className = (path === folder.current ? "on " : "") + (f.dirty ? "dirty" : "");
-        b.addEventListener("click", () => openFile(path));
-        bar.appendChild(b);
+    if ($("explorer").hidden) {
+        const t = document.createElement("button");
+        t.className = "ex-toggle";
+        t.textContent = "☰";
+        t.title = "打開檔案總管（⌘B）";
+        t.addEventListener("click", () => setExplorer(true));
+        bar.appendChild(t);
     }
-    for (const [path, m] of folder.maps) {
-        const b = document.createElement("button");
-        b.textContent = "🗺 " + path.replace(/^maps\//, "");
-        b.title = path;
-        b.className = (path === folder.current ? "on " : "") + (m.dirty ? "dirty" : "");
-        b.addEventListener("click", () => openFile(path));
-        bar.appendChild(b);
+    for (const path of folder.open) {
+        const tab = document.createElement("span");
+        tab.className = "ftab" + (path === folder.current ? " on" : "") + (fileDirty(path) ? " dirty" : "");
+        tab.title = path;
+        const name = document.createElement("button");
+        name.className = "name";
+        name.textContent = fileLabel(path);
+        name.addEventListener("click", () => openFile(path));
+        name.addEventListener("auxclick", (e) => { if (e.button === 1) closeFile(path); });
+        const x = document.createElement("button");
+        x.className = "x";
+        x.textContent = "×";
+        x.title = "關閉（檔案不會刪掉）";
+        x.addEventListener("click", () => closeFile(path));
+        tab.append(name, x);
+        bar.appendChild(tab);
     }
-    for (const [path, d] of folder.data) {
-        const b = document.createElement("button");
-        b.textContent = "📋 " + path.replace(/^data\//, "");
-        b.title = path + "（資料表）";
-        b.className = (path === folder.current ? "on " : "") + (d.dirty ? "dirty" : "");
-        b.addEventListener("click", () => openFile(path));
-        bar.appendChild(b);
+    const on = bar.querySelector(".ftab.on");
+    if (on) on.scrollIntoView({ block: "nearest", inline: "nearest" });
+
+    // 左邊：檔案總管
+    const list = $("ex-list");
+    list.innerHTML = "";
+    const q = $("ex-filter").value.trim().toLowerCase();
+    const groups = [
+        { key: "src", title: "程式", paths: [...folder.files.keys()], add: newFile, addTitle: "新程式檔" },
+        { key: "maps", title: "地圖", paths: [...folder.maps.keys()], add: newMap, addTitle: "新地圖" },
+        { key: "data", title: "資料", paths: [...folder.data.keys()] },
+    ];
+    let shown = 0;
+    for (const g of groups) {
+        const paths = q ? g.paths.filter((p) => p.toLowerCase().includes(q)) : g.paths;
+        if (q && paths.length === 0) continue;
+        const closed = !q && folder.collapsed[g.key];
+        const head = document.createElement("div");
+        head.className = "ex-group";
+        head.innerHTML = `<span>${closed ? "▸" : "▾"} ${g.title}</span><span class="ex-count">${paths.length}</span>`;
+        head.addEventListener("click", () => {
+            folder.collapsed[g.key] = !folder.collapsed[g.key];
+            saveUi();
+            renderTabs();
+        });
+        if (g.add) {
+            const add = document.createElement("button");
+            add.className = "ex-add";
+            add.textContent = "＋";
+            add.title = g.addTitle;
+            add.addEventListener("click", (e) => { e.stopPropagation(); g.add(); });
+            head.appendChild(add);
+        }
+        list.appendChild(head);
+        if (closed) continue;
+        for (const path of paths) {
+            const b = document.createElement("button");
+            b.className = "ex-item" + (path === folder.current ? " on" : "") +
+                (folder.open.includes(path) ? " open" : "") + (fileDirty(path) ? " dirty" : "");
+            b.textContent = fileLabel(path).replace(/^(🗺|📋) /, "");
+            b.title = path;
+            b.addEventListener("click", () => openFile(path));
+            list.appendChild(b);
+            shown++;
+        }
     }
-    const add = document.createElement("button");
-    add.textContent = "＋ 新檔案";
-    add.className = "add";
-    add.addEventListener("click", newFile);
-    bar.appendChild(add);
-    const addMap = document.createElement("button");
-    addMap.textContent = "＋ 新地圖";
-    addMap.className = "add";
-    addMap.addEventListener("click", newMap);
-    bar.appendChild(addMap);
+    if (q && shown === 0) list.innerHTML = '<div class="ex-empty">找不到符合的檔案</div>';
+    saveUi();
 }
+
+// 篩選：打字即時過濾；Enter 打開第一個；Esc 清掉回到編輯器
+$("ex-filter").addEventListener("input", () => renderTabs());
+$("ex-filter").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+        const first = $("ex-list").querySelector(".ex-item");
+        if (first) { first.click(); $("ex-filter").value = ""; renderTabs(); editor.focus(); }
+        e.preventDefault();
+    } else if (e.key === "Escape") {
+        $("ex-filter").value = "";
+        renderTabs();
+        editor.focus();
+    }
+});
+$("ex-hide").addEventListener("click", () => setExplorer(false));
+// ⌘P／Ctrl+P：找檔案；⌘B／Ctrl+B：收起／打開檔案總管（只在資料夾模式）
+document.addEventListener("keydown", (e) => {
+    if (!folder || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+    const k = e.key.toLowerCase();
+    if (k === "p") {
+        e.preventDefault();
+        if ($("explorer").hidden) setExplorer(true);
+        $("ex-filter").focus();
+        $("ex-filter").select();
+    } else if (k === "b") {
+        e.preventDefault();
+        setExplorer($("explorer").hidden);
+    }
+});
 
 // 新地圖：maps/名稱.json，20 × 15 格（剛好一個畫面），地面鋪滿第一張圖的第 0 格，
 // 自動加進 comet.json 的 maps
