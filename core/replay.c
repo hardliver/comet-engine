@@ -21,6 +21,7 @@
 #define EV_TYPE_SHIFT  5
 #define EV_TYPE_INPUT  0
 #define EV_TYPE_SAVE   1
+#define EV_TYPE_CLOCK  2
 #define EV_SLOT_MASK   0x07   // 讀存檔事件：bit 0–2 是欄位
 
 // 一位玩家一幀的輸入
@@ -300,13 +301,13 @@ void replay_before_frame(uint32_t frame)
 
     // 上一幀還有沒用掉的事件：錄影時遊戲在那一幀讀了存檔，這次卻沒讀
     if (next_event_frame < frame) {
-        platform_log("重播和遊戲對不上（讀存檔的次數不同），停止播放");
+        platform_log("重播和遊戲對不上（讀存檔或時鐘的次數不同），停止播放");
         replay_stop();
         return;
     }
 
     // 這一幀的輸入事件全部套用（同一幀可能有好幾位玩家的事件，幀數差是 0）。
-    // 遇到讀存檔事件就停：那要等遊戲執行到 loadsave 時才用
+    // 遇到讀存檔、讀時鐘事件就停：那要等遊戲執行到 loadsave、clock 時才用
     while (next_event_frame == frame && next_type() == EV_TYPE_INPUT) {
         if (apply_event()) {
             platform_log("重播檔損壞，停止播放");
@@ -380,6 +381,46 @@ int replay_play_save(uint32_t frame, int slot, uint8_t *out, int cap)
     last_event_frame = frame;
     peek_next_event();
     return len;
+}
+
+// ============================================================
+// 讀時鐘
+// ============================================================
+
+// 時間用 8 bytes 固定長度（有號整數轉成無號再一個一個 byte 寫）：
+// 秒數很大（2026 年約 17 億），varint 也省不了多少，而且只有時間變了才寫一次
+void replay_record_clock(uint32_t frame, int64_t t)
+{
+    if (state != REPLAY_RECORDING) return;
+    if (reserve(5 + 1 + 8)) {   // 幀數差 + 開頭 + 時間
+        platform_log("重播檔太大，停止錄影");
+        state = REPLAY_OFF;
+        return;
+    }
+    put_varint(frame - last_event_frame);
+    put_byte((uint8_t)(EV_TYPE_CLOCK << EV_TYPE_SHIFT));
+    uint64_t u = (uint64_t)t;   // -1 變成 0xFFFF…FF，讀回來轉回 int64_t 又是 -1
+    for (int i = 0; i < 8; i++) put_byte((uint8_t)(u >> (i * 8)));
+    last_event_frame = frame;
+}
+
+int replay_play_clock(uint32_t frame, int64_t *t)
+{
+    // 下一個事件不是「這一幀的讀時鐘」：錄影時這次讀到的和上一次一樣
+    if (next_event_frame != frame || next_type() != EV_TYPE_CLOCK) return 0;
+    read_pos++;
+    if (read_pos + 8 > buf_len) {
+        platform_log("重播檔損壞，停止播放");
+        replay_stop();
+        return -2;
+    }
+    uint64_t u = 0;
+    for (int i = 0; i < 8; i++) u |= (uint64_t)buf[read_pos + i] << (i * 8);
+    read_pos += 8;
+    *t = (int64_t)u;
+    last_event_frame = frame;
+    peek_next_event();
+    return 1;
 }
 
 // ============================================================

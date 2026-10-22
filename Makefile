@@ -3,7 +3,7 @@
 #   make web     編譯網頁版到 build/web/
 #   make serve   在 http://localhost:8420 開啟網頁版（編輯器：/studio.html）
 #                （換埠號：make serve PORT=9000）
-#   make check   自動測試：網頁版與 Mac 版結果一致（含中文字、地圖、重播檔、存檔、系統卡匣、資源包）、Lua 錯誤處理正常
+#   make check   自動測試：網頁版與 Mac 版結果一致（含中文字、地圖、重播檔、存檔、現實時鐘、系統卡匣、資源包）、Lua 錯誤處理正常
 #   make clean   清除編譯結果
 #
 # -Wall -Wextra：開啟警告，讓編譯器幫你抓可疑的寫法
@@ -11,7 +11,7 @@
 CFLAGS = -Wall -Wextra -std=c99 -O2
 
 # 核心
-CORE = core/gfx.c core/map.c core/input.c core/engine.c core/script.c core/sha256.c core/replay.c core/save.c core/system.c core/pak.c
+CORE = core/gfx.c core/map.c core/input.c core/engine.c core/script.c core/sha256.c core/replay.c core/save.c core/clock.c core/system.c core/pak.c
 HEADERS = $(wildcard core/*.h)
 
 # Lua 5.4（third_party/lua，原始碼未修改）
@@ -76,7 +76,7 @@ build/map_test.lua: tests/map/comet.json tests/map/main.lua tests/map/maps/test.
 build/pak_test.pak: tests/pak/make_pak.mjs tools/pak.mjs
 	node tests/pak/make_pak.mjs
 
-check: build/mac web build/text_test.lua build/map_test.lua build/data_test.lua build/pak_test.pak tests/save/main.lua tests/pak/main.lua $(wildcard tests/system/*.lua)
+check: build/mac web build/text_test.lua build/map_test.lua build/data_test.lua build/pak_test.pak tests/save/main.lua tests/clock/main.lua tests/pak/main.lua $(wildcard tests/system/*.lua)
 	./build/mac
 	./build/mac games/move_box.lua build/record.ppm --record build/move_box.rep
 	./build/mac games/move_box.lua build/replay.ppm --replay build/move_box.rep
@@ -87,6 +87,9 @@ check: build/mac web build/text_test.lua build/map_test.lua build/data_test.lua 
 	./build/mac tests/save/main.lua build/save1.ppm --saves build/saves
 	./build/mac tests/save/main.lua build/save2.ppm --saves build/saves --record build/save.rep
 	./build/mac tests/save/main.lua build/save3.ppm --replay build/save.rep
+	./build/mac tests/clock/main.lua build/clock1.ppm --clock 2026-12-31T23:59:59 --record build/clock.rep
+	./build/mac tests/clock/main.lua build/clock2.ppm --replay build/clock.rep
+	./build/mac tests/clock/main.lua build/clock3.ppm
 	./build/mac tests/system/system.lua build/system.ppm --system \
 		--game test/a tests/system/game_a.lua --game test/b tests/system/game_b.lua
 	./build/mac tests/pak/main.lua build/pak_test.ppm --pak build/pak_test.pak --record build/pak.rep

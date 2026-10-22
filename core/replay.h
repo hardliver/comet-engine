@@ -19,7 +19,7 @@
 //   replay_state() 變成 REPLAY_FINISHED 後，replay_matched() 告訴你最後的畫面是否一致。
 //   播完之後輸入還給平台，玩家可以接著玩。
 //
-// 檔案格式（所有數字都是 little-endian，第 1 版）：
+// 檔案格式（所有數字都是 little-endian，第 2 版；第 1 版沒有種類 2 的事件，其他一樣）：
 //   位置  大小  內容
 //     0    4   "CRPL"
 //     4    2   格式版本（1）
@@ -34,7 +34,7 @@
 //   事件：
 //     幀數差（varint：距離上一個事件幾幀）
 //     1 byte：bit 0–1 玩家、bit 2 有按鍵、bit 3 有左搖桿、bit 4 有右搖桿、
-//             bit 5–7 事件種類（0 = 輸入、1 = 讀存檔、其他保留）
+//             bit 5–7 事件種類（0 = 輸入、1 = 讀存檔、2 = 讀時鐘、其他保留）
 //
 //   種類 0（輸入）：
 //     按鍵 2 bytes／左搖桿 x、y 各 1 byte／右搖桿 x、y 各 1 byte（有才寫）
@@ -43,8 +43,11 @@
 //     開頭 byte 的 bit 0–2 是欄位（0–7）
 //     varint：長度 + 1（0 代表「沒有存檔」）
 //     存檔的 bytes
-//   同一幀裡，輸入事件在前（幀開始時記），讀存檔事件在後（遊戲執行中才發生）。
-//   在 _init 裡讀的存檔算第 0 幀。
+//   種類 2（讀時鐘：遊戲呼叫 clock 時讀到了什麼，見 clock.h）：
+//     8 bytes 有號整數：本地時間，從 1970-01-01 00:00:00 起算的秒數；-1 = 沒有時間來源
+//     只有「和上一次讀到的不一樣」才寫。播放時，讀時鐘的那一幀沒有這個事件，就代表和上一次一樣
+//   同一幀裡，輸入事件在前（幀開始時記），讀存檔、讀時鐘事件在後（遊戲執行中才發生，照發生的順序）。
+//   在 _init 裡讀的存檔、時鐘算第 0 幀。
 
 #ifndef REPLAY_H
 #define REPLAY_H
@@ -52,7 +55,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define REPLAY_VERSION     1
+#define REPLAY_VERSION     2
 #define REPLAY_HEADER_SIZE 112
 
 enum {
@@ -103,5 +106,12 @@ void replay_record_save(uint32_t frame, int slot, const uint8_t *data, int len);
 // 重播檔裡下一個事件不是「這一幀、這個欄位的讀存檔」，代表遊戲跑得和錄影時不一樣：
 // 停止播放，回傳 -2
 int replay_play_save(uint32_t frame, int slot, uint8_t *buf, int cap);
+
+// 遊戲讀時鐘、而且讀到的和上一次不一樣時（clock.c 呼叫）。t = -1 代表沒有時間來源
+// 錄影中：記下讀到的時間
+void replay_record_clock(uint32_t frame, int64_t t);
+// 播放中：下一個事件是「這一幀的讀時鐘」就取出來放進 *t、回傳 1；
+// 不是的話回傳 0（錄影時讀到的和上一次一樣，沒有寫事件）；重播檔損壞回傳 -2（播放已停止）
+int replay_play_clock(uint32_t frame, int64_t *t);
 
 #endif

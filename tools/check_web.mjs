@@ -27,6 +27,9 @@
 // 測試 13：資料表編輯器（dataedit.js）的存檔格式。重新排版後內容不變、排兩次結果一樣、
 //          編號的順序照檔案（"10" 不會跑到 "01" 前面）；依檔案形狀選對畫面（表格、遭遇表、文字）；
 //          格子的輸入檢查（整數不能有小數、JSON 格式錯誤）
+// 測試 17：現實時鐘（tests/clock）。和 Mac 版 --clock 2026-12-31T23:59:59 同樣的時間：檢查方塊全綠、
+//          畫面和 build/clock1.ppm 相同、錄的重播檔和 Mac 版逐 byte 相同；
+//          沒有時間來源時播放 Mac 的重播檔，讀到的是重播檔裡的時間；沒有時間來源時 clock() 是 nil
 
 import fs from "fs";
 import crypto from "crypto";
@@ -41,7 +44,8 @@ let failures = 0;
 const logs = [];
 
 // store：存檔放在哪裡（Map：「id:欄位」→ bytes）。不給就每次都是空的
-async function loadEngine(store = new Map()) {
+// clock：第 0 幀的本地時間（秒），和 Mac 版的 --clock 一樣每 60 幀走 1 秒；null = 沒有時間來源
+async function loadEngine(store = new Map(), clock = null) {
     let engine = null;
     const cstr = (ptr) => {
         const mem = new Uint8Array(engine.memory.buffer);
@@ -64,6 +68,9 @@ async function loadEngine(store = new Map()) {
             if (data === 0) store.delete(key);
             else store.set(key, new Uint8Array(engine.memory.buffer, data, len).slice());
             return 0;
+        },
+        js_clock() {
+            return clock === null ? -1 : clock + Math.floor(engine.engine_frame_count() / 60);
         },
     }, { get: (t, name) => t[name] || (() => 0) });
     const wasi = new Proxy({}, { get: () => () => 8 });   // 8 = EBADF
@@ -645,6 +652,55 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
         load(engine, "local img = newimage(2, 2, \"EAAREA==\") print(table.concat(imgcolors(img), ',')) print(#imgcolors(img, 1, 0, 1, 1))\n");
         if (!logs.includes("16,17")) problems.push("imgcolors 應該是 16,17");
         if (!logs.includes("0")) problems.push("imgcolors 只看透明的那一格應該是空的");
+    } catch (e) {
+        problems.push(String(e));
+    }
+    if (problems.length === 0) ok(name);
+    else fail(name, problems.join("；"));
+}
+
+// ---- 測試 17 ----
+{
+    const name = "現實時鐘：和 Mac 版相同、記進重播檔、播放時讀重播檔裡的時間";
+    const src = fs.readFileSync("tests/clock/main.lua", "utf8");
+    const problems = [];
+    const macPPM = (f) => { const p = fs.readFileSync(f); return p.subarray(p.length - W * H * 3); };
+    const run = (engine) => { for (let i = 0; i < 90; i++) { scriptedInput(engine, i); engine.engine_frame(); } };
+    // 下方 8 個檢查方塊都是綠色（有時間來源）
+    const allGreen = (rgb, n) => {
+        for (let i = 0; i < n; i++) {
+            const k = (230 * W + 4 + i * 8) * 3;
+            if ([rgb[k], rgb[k + 1], rgb[k + 2]].join(",") !== "0,228,54") return false;
+        }
+        return true;
+    };
+    try {
+        if (!allGreen(macPPM("build/clock1.ppm"), 8)) problems.push("Mac 版的檢查方塊不是全綠");
+        const start = Date.UTC(2026, 11, 31, 23, 59, 59) / 1000;   // 本地時間的秒數：當成 UTC 算就對了（不加時區）
+        {
+            const engine = await loadEngine(new Map(), start);
+            engine.replay_record_begin();
+            load(engine, src);
+            run(engine);
+            if (Buffer.compare(framebufferRGB(engine), macPPM("build/clock1.ppm")) !== 0) problems.push("有時間來源的畫面和 Mac 版不同");
+            const ptr = engine.replay_snapshot();
+            const rep = Buffer.from(new Uint8Array(engine.memory.buffer, ptr, engine.replay_snapshot_size()));
+            if (Buffer.compare(rep, fs.readFileSync("build/clock.rep")) !== 0) problems.push("網頁版錄的重播檔和 Mac 版不同");
+        }
+        {
+            const engine = await loadEngine(new Map(), null);   // 沒有時間來源：時間只能從重播檔來
+            playBegin(engine, fs.readFileSync("build/clock.rep"));
+            load(engine, src);
+            const st = runReplay(engine);
+            if (st !== 3 || engine.replay_matched() !== 1) problems.push(`播放結果：狀態 ${st}、一致 ${engine.replay_matched()}`);
+            if (!allGreen(framebufferRGB(engine), 8)) problems.push("播放時沒有讀到重播檔裡的時間");
+        }
+        {
+            const engine = await loadEngine(new Map(), null);
+            load(engine, src);
+            run(engine);
+            if (Buffer.compare(framebufferRGB(engine), macPPM("build/clock3.ppm")) !== 0) problems.push("沒有時間來源的畫面和 Mac 版不同");
+        }
     } catch (e) {
         problems.push(String(e));
     }

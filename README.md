@@ -96,6 +96,7 @@ function _draw()   end   -- 每幀一次：畫畫面
 | `stick(玩家, n)` | 搖桿 x, y（-127～127）；n = 0 左、1 右 |
 | `rnd(n)` | 0 到 n-1 的隨機整數（各平台結果相同） |
 | `frame()` | 目前第幾幀 |
+| `clock()` | 現實的本地時間 `{ year, month, day, hour, min, sec, wday, time }`；沒有時間來源回傳 `nil` |
 | `pal(色, r, g, b)` | 設定調色盤（0–255） |
 | `camera(x, y)` | 繪圖平移，用來捲動地圖 |
 | `spr(圖, n, x, y, 左右翻, 上下翻)` | 畫圖片的第 n 格 |
@@ -112,6 +113,7 @@ function _draw()   end   -- 每幀一次：畫畫面
 - 重播：遊玩頁從開局就一直錄，按「下載重播」得到 `.rep`（從頭到現在，錄影繼續）；把 `.rep` 拖進遊玩頁就用目前的遊戲播放，播完顯示最後的畫面是否一致，之後可接著玩。每次開局用新的亂數種子（記在重播檔裡）；Studio 與自動測試固定用種子 1
 - 系統卡匣：`engine_load_system()` 載入的卡匣多一個 `sys` 表格（`sys.games()`、`sys.launch(id)`、`sys.last_game()`），一般遊戲沒有。同一時間只有一個 Lua 環境：啟動遊戲時關掉系統卡匣，回 HOME（HOME 鍵，或按住 Start＋Select 0.5 秒）時重新載入。載入哪個檔案由平台決定（引擎只發出請求），網頁版的大廳在 nova-system
 - 存檔：`save(欄位, 值)`、`loadsave(欄位)`，8 個欄位、每個最多 16 KB。網頁版存在瀏覽器的 localStorage（依遊戲 id 分開，同一個網址的遊玩頁和 Studio 共用）；Mac 版用 `--saves`。播放重播時從重播檔讀、不寫入
+- 現實時鐘：`clock()`。網頁用瀏覽器的時間（本地時區）；Mac 版用 `--clock now` 或 `--clock 2026-10-22T14:05`（從那一刻起每 60 幀走 1 秒，沒加就是沒有時間來源）；主機之後用 RTC 或 WiFi 對時。讀到的時間記進重播檔（重播檔第 2 版），重播時讀重播檔裡的時間
 - 網頁輸入：
   - 鍵盤：WASD = 左搖桿、方向鍵 = 右搖桿、K/L/J/I = A/B/X/Y（空白鍵也是 A）、Q/E = L/R、Enter = Start、Tab = Select
   - 手把（Gamepad API，最多 4 支）：按鍵、十字鍵、雙搖桿類比值

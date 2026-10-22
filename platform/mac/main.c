@@ -13,6 +13,9 @@
 //   加上 --pak 檔.pak：遊戲的資源包（背景、角色動畫，見 core/pak.h）
 //   加上 --saves 資料夾：存檔寫在那個資料夾（檔名「id.欄位.sav」，id 的 / 換成 _）。
 //   沒加就只存在記憶體裡，程式結束就沒了（測試時不會留下檔案）
+//   加上 --clock 時間：遊戲的 clock() 讀到的現實時間。「now」= 這台電腦現在的時間，
+//     或寫成 2026-10-22T14:05（秒可省略）。時間從那一刻開始，每 60 幀走 1 秒（跟著幀數走，結果每次一樣）。
+//     沒加就是「沒有時間來源」，clock() 回傳 nil（測試的結果不會因為哪天跑而不同）
 //   加上 --profile：運算預算（Level 1）。跑完印出平均、最重的 5 幀（第幾幀、Lua 指令、像素、繪圖呼叫、預估 Pico 負載 %）
 //   ./build/mac 系統卡匣.lua 輸出圖檔 --system --game id 遊戲.lua [--game id 遊戲.lua …]
 //                                                    Nova 模式：載入系統卡匣，用另一組預先寫好的按鍵
@@ -25,7 +28,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "../../core/engine.h"
+#include "../../core/clock.h"
 #include "../../core/gfx.h"
 #include "../../core/input.h"
 #include "../../core/pak.h"
@@ -38,6 +43,37 @@
 void platform_log(const char *msg)
 {
     printf("%s\n", msg);
+}
+
+// ---- 現實時鐘（--clock）----
+// clock_start：第 0 幀時的本地時間（秒）；-1 = 沒有時間來源
+static int64_t clock_start = -1;
+
+int64_t platform_clock(void)
+{
+    if (clock_start < 0) return -1;
+    // 用幀數算經過幾秒，而不是讀電腦的時間：無頭模擬器跑得比 60 幀／秒快很多，
+    // 而且這樣同一個指令跑幾次結果都一樣
+    return clock_start + engine_frame_count() / FPS;
+}
+
+// 「now」或「2026-10-22T14:05[:30]」→ 設定 clock_start。格式不對回傳 1
+static int parse_clock(const char *s)
+{
+    if (strcmp(s, "now") == 0) {
+        time_t now = time(NULL);
+        struct tm *lt = localtime(&now);   // 依這台電腦的時區換成年月日時分秒
+        if (lt == NULL) return 1;
+        clock_start = clock_from_date(lt->tm_year + 1900, lt->tm_mon + 1, lt->tm_mday,
+                                      lt->tm_hour, lt->tm_min, lt->tm_sec);
+        return 0;
+    }
+    int y, mo, d, h, mi, sec = 0;
+    // sscanf 回傳成功讀到幾個數字：至少要有年月日時分 5 個
+    if (sscanf(s, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &sec) < 5) return 1;
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || h < 0 || h > 23 || mi < 0 || mi > 59 || sec < 0 || sec > 59) return 1;
+    clock_start = clock_from_date(y, mo, d, h, mi, sec);
+    return 0;
 }
 
 // 把整個檔案讀進記憶體。回傳的記憶體用完要 free()
@@ -359,6 +395,11 @@ int main(int argc, char **argv)
             pak_path = argv[++i];
         } else if (strcmp(argv[i], "--saves") == 0 && i + 1 < argc) {
             save_dir = argv[++i];
+        } else if (strcmp(argv[i], "--clock") == 0 && i + 1 < argc) {
+            if (parse_clock(argv[++i])) {
+                printf("--clock 的格式：now 或 2026-10-22T14:05\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--profile") == 0) {
             profile = 1;
         } else if (strcmp(argv[i], "--system") == 0) {

@@ -18,6 +18,7 @@
 #include "input.h"
 #include "platform.h"
 #include "save.h"
+#include "clock.h"
 #include "pak.h"
 #include "system.h"
 
@@ -528,6 +529,7 @@ static void open_libs(lua_State *L, int is_system)
     luaL_setfuncs(L, api, 0);
     lua_pop(L, 1);
     save_open_lua(L);   // save、loadsave（在 save.c）
+    clock_open_lua(L);  // clock（在 clock.c）
     pak_open_lua(L);    // bgload、sprdraw 等資源包函式（在 pak.c）
     // 系統 API 只給系統卡匣。一般遊戲的 Lua 環境裡根本沒有 sys 這個名字
     if (is_system) system_open_lua(L);

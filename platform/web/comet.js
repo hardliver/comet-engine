@@ -84,13 +84,21 @@ function writeCString(exports, text) {
     return ptr;
 }
 
-export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log, saveStore = browserSaveStore() } = {}) {
+// 現實時鐘的預設來源：瀏覽器的時間，換成「本地時間的秒數」。
+// Date.now() 是 UTC 的毫秒；getTimezoneOffset() 是「UTC 比本地快幾分鐘」（台灣是 -480），所以要減掉
+export function browserClock() {
+    const now = new Date();
+    return Math.floor(now.getTime() / 1000) - now.getTimezoneOffset() * 60;
+}
+
+export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log, saveStore = browserSaveStore(), clock = browserClock } = {}) {
     let exports = null;
 
     // wasm 需要從 JavaScript 拿到的函式（imports）。
     // js_log：C 的 platform_log 會呼叫它。
     // js_save_read／js_save_write：C 的 platform_save_read／platform_save_write（web.c）會呼叫。
     //   C 給的是 wasm 記憶體裡的位置（指標），從那裡讀寫 bytes
+    // js_clock：C 的 platform_clock 會呼叫，回傳本地時間的秒數（沒有時間來源回傳 -1）
     // 其他是 C 標準函式庫順帶要求的系統功能（檔案、時間），遊戲用不到，
     // 統一回傳「沒有這個檔案」的錯誤碼。用 Proxy 是為了不用一個一個列出名字。
     const env = new Proxy({
@@ -116,6 +124,7 @@ export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log
             const bytes = new Uint8Array(exports.memory.buffer, data, len);
             return saveStore.set(key, bytesToBase64(bytes)) ? 0 : 1;
         },
+        js_clock: () => (clock ? clock() : -1),
     }, { get: (target, name) => target[name] || (() => 0) });
     const wasi = new Proxy({}, { get: () => () => 8 });   // 8 = EBADF
 

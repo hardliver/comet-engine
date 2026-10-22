@@ -68,6 +68,7 @@ end
 | `mapw(地圖)`、`maph(地圖)` | 地圖幾格寬、幾格高 |
 | `save(欄位, 值)` | 存檔。欄位 0–7；值可以是表格、字串、整數、`true`/`false`（表格裡也只能放這些）。`save(欄位, nil)` 刪除 |
 | `loadsave(欄位)` | 讀回存的值；沒有存檔回傳 `nil` |
+| `clock()` | 現實的本地時間：`{ year, month, day, hour, min, sec, wday, time }`（`wday` 0 = 星期日；`time` 是從 1970-01-01 起算的秒數，用來算過了多久）。這台機器沒有時間來源回傳 `nil`，遊戲一定要能處理 |
 | `print(...)` | 印出訊息到除錯主控台（不會顯示在遊戲畫面上） |
 
 除此之外只能用 Lua 內建的：`math`（沒有 `random`）、`string`、`table`、`utf8`、`coroutine`，
@@ -306,6 +307,42 @@ end
 - 存檔屬於哪個遊戲，看遊戲檔開頭的 `-- id: 作者/遊戲`（由 `comet.json` 的 `id` 自動寫入）。單一檔案的遊戲請自己在第一行寫上
 - 讀回來的是新的表格，不是存進去的那一個；存檔版本升級時，記得處理舊存檔缺少的欄位（`s.gold or 0`）
 
+### 現實時鐘
+
+```lua
+local c = nil          -- 最近一次讀到的時間
+local away = 0         -- 上次存檔後離開了幾秒（最多算 24 小時）
+
+function _init()
+    c = clock()
+    local s = loadsave(1)
+    if c and s and s.last then
+        away = math.max(0, math.min(c.time - s.last, 24 * 3600))   -- 往回調時鐘 → 0；離開太久 → 24 小時
+    end
+    if c then save(1, { last = c.time }) end
+end
+
+function _update()
+    if frame() % 60 == 0 then c = clock() end   -- 只要分鐘的話，每秒讀一次就夠了
+end
+
+function _draw()
+    cls(1)
+    if c then
+        local night = c.hour >= 19 or c.hour < 5
+        text(string.format("%d/%d %02d:%02d", c.month, c.day, c.hour, c.min), 10, 10, night and 12 or 10)
+        text("離開了 " .. away // 60 .. " 分鐘", 10, 30, 7)
+    else
+        text("沒有時間來源", 10, 10, 6)   -- 例如主機沒裝 RTC：遊戲要照樣能玩
+    end
+end
+```
+
+- 讀到的時間記在重播檔裡，重播時拿到的還是當時的時間，所以重播一樣一模一樣
+- 同一幀讀好幾次都是同一個值。只要分鐘、小時的話，不必每幀都讀（例如每 60 幀讀一次就好）
+- 玩家可以自己調機器的時間，`time` 可能變小（往回調）或一下子跳很大；要算「過了多久」時處理這兩種情況
+- 每一種玩法都要有不靠現實時間的路：沒有時間來源的機器也要能玩
+
 ### 除錯（Studio 的「狀態」分頁）
 
 在 Studio 開發時，可以看遊戲現在的狀態、執行除錯指令。遊戲只要定義兩個全域表格（都可以省略，玩家玩的時候用不到，放著沒關係）：
@@ -361,7 +398,7 @@ Studio 狀態列的「Pico xx%」是最近 2 秒最重的一幀預估要花掉 P
    rect(x16 // 16, y, 8, 8, 7)
    ```
 3. 隨機數只能用 `rnd(n)`。**沒有** `math.random`。每次開局的亂數都不同（種子由引擎決定並記在重播檔裡），所以同一場遊戲可以完整重播
-4. **沒有** `io`、`os`、`require`、`dofile`、`loadfile`、`debug`，不能讀寫檔案、不能取得系統時間。要留下資料用 `save`／`loadsave`
+4. **沒有** `io`、`os`、`require`、`dofile`、`loadfile`、`debug`，不能讀寫檔案。要留下資料用 `save`／`loadsave`；要現實時間用 `clock()`（不要用 `os.time`）。計時（幾秒後做什麼）用 `frame()`，不要用 `clock()`
 5. 不要依賴 `pairs()` 走訪表格的順序；需要固定順序時用陣列和 `ipairs()`
 6. 目前**沒有**音效
 7. 多個原始碼檔（`comet.json` 的 `sources`）合併時，每個檔案各自包在 `do … end` 裡：**一個檔案最外層的 `local` 在別的檔案看不到**。要給別的檔案用的函式、表格，不要加 `local`（例如 `function kin_new(...)`、`DATA`）

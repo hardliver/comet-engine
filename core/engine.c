@@ -2,6 +2,7 @@
 
 #include <string.h>
 #include "engine.h"
+#include "clock.h"
 #include "gfx.h"
 #include "map.h"
 #include "pak.h"
@@ -55,6 +56,7 @@ static int load(const char *src, size_t len, int is_system)
     if (replay_on_load(sha)) return 2;
     memcpy(cart_sha, sha, 32);
     save_on_load(src, len);   // 遊戲的 id：存檔放在哪裡
+    clock_on_load();          // 忘掉上一款遊戲讀到的時間
     system_on_load(is_system);
 
     frame_count = 0;
