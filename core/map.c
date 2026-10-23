@@ -9,6 +9,7 @@
 typedef struct {
     char name[LAYER_NAME_MAX];
     uint16_t *cells;              // w × h 個格子編號
+    int in_rom;                   // 1 = cells 在唯讀區（主機的 Flash），還沒被 mset 改過
 } Layer;
 
 typedef struct {
@@ -29,7 +30,8 @@ static Map maps[MAX_MAPS + 1];
 void map_reset(void)
 {
     for (int i = 1; i <= MAX_MAPS; i++) {
-        for (int k = 0; k < maps[i].nlayers; k++) free(maps[i].layers[k].cells);
+        for (int k = 0; k < maps[i].nlayers; k++)
+            if (!maps[i].layers[k].in_rom) free(maps[i].layers[k].cells);   // 唯讀區的不能 free
         memset(&maps[i], 0, sizeof(Map));
     }
 }
@@ -101,6 +103,17 @@ int map_add_layer(int m, const char *name, const uint8_t *data)
     strncpy(layer->name, name, LAYER_NAME_MAX - 1);
     layer->name[LAYER_NAME_MAX - 1] = '\0';
     layer->cells = cells;
+    layer->in_rom = 0;
+
+    // 平台有唯讀區（主機）：先放那裡，RAM 的這份丟掉。遊戲第一次 mset 時才複製回 RAM
+    // （寫入時才複製，copy-on-write）。大部分地圖從來不會被改，就一直不占 RAM
+    const uint8_t *rom = gfx_rom_keep((const uint8_t *)cells, n * sizeof(uint16_t));
+    if (rom != NULL) {
+        free(cells);
+        // 唯讀區的位址當成可寫的指標存著，但 in_rom = 1 時絕對不能寫（寫 Flash 會當機）
+        layer->cells = (uint16_t *)rom;
+        layer->in_rom = 1;
+    }
     return 0;
 }
 
@@ -131,6 +144,15 @@ int map_set(int m, const char *name, int cx, int cy, int tile)
     if (layer == NULL) return err;
     if (cx < 0 || cy < 0 || cx >= map->w || cy >= map->h) return 0;
     if (tile < 0 || tile > map->total) tile = 0;
+    if (layer->in_rom) {
+        // 第一次改這個圖層：複製一份到 RAM，之後改 RAM 那份
+        size_t n = (size_t)map->w * (size_t)map->h;
+        uint16_t *copy = malloc(n * sizeof(uint16_t));
+        if (copy == NULL) return -3;   // 記憶體不夠，這次的修改做不到
+        memcpy(copy, layer->cells, n * sizeof(uint16_t));
+        layer->cells = copy;
+        layer->in_rom = 0;
+    }
     layer->cells[cy * map->w + cx] = (uint16_t)tile;
     return 0;
 }

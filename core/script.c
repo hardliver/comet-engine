@@ -426,6 +426,7 @@ static void check_map_result(lua_State *L, int r, const char *layer)
 {
     if (r == -2) luaL_error(L, "map does not exist");
     if (r == -1) luaL_error(L, "map has no layer '%s'", layer);
+    if (r == -3) luaL_error(L, "out of memory (mset)");
 }
 
 // map(地圖, 圖層, ox, oy)：畫一個圖層，地圖左上角放在 (ox, oy)（省略是 0, 0）

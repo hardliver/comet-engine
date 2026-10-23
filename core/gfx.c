@@ -54,14 +54,47 @@ static int cam_y = 0;
 // 圖片：寬、高、小格大小、像素（顏色編號）
 typedef struct {
     int w, h, tile;
-    uint8_t *pixels;   // NULL 代表這個位置沒有圖片
+    const uint8_t *pixels;   // NULL 代表這個位置沒有圖片。const：建好之後只讀不寫
+    int in_rom;              // 1 = 像素在唯讀區（不是 malloc 來的，不能 free）
 } Image;
 
 // 圖片編號從 1 開始，所以陣列多開一格，images[0] 不用
 static Image images[MAX_IMAGES + 1];
 
 // 字型（同一時間只有一套）
-static uint8_t *font_data = NULL;   // 所有字的資料接在一起
+static const uint8_t *font_data = NULL;   // 所有字的資料接在一起
+static int font_in_rom = 0;
+
+// 唯讀區（見 gfx.h 的 gfx_set_rom_store）
+static GfxRomStore rom_store = NULL;
+
+void gfx_set_rom_store(GfxRomStore store) { rom_store = store; }
+
+const uint8_t *gfx_rom_keep(const uint8_t *data, size_t len)
+{
+    return rom_store != NULL ? rom_store(data, len) : NULL;
+}
+
+// 把 len bytes 存起來：先試唯讀區，不行就 malloc。*in_rom 記下是哪一種（之後 free 要知道）
+static const uint8_t *keep_copy(const uint8_t *data, size_t len, int *in_rom)
+{
+    if (rom_store != NULL) {
+        const uint8_t *p = rom_store(data, len);
+        if (p != NULL) { *in_rom = 1; return p; }
+    }
+    uint8_t *copy = malloc(len);
+    if (copy == NULL) return NULL;
+    memcpy(copy, data, len);
+    *in_rom = 0;
+    return copy;
+}
+
+// 釋放 keep_copy 給的記憶體（唯讀區的不用、也不能 free）
+static void drop_copy(const uint8_t *p, int in_rom)
+{
+    // (void *)：free 要的是可以改的指標，這裡把 const 拿掉（這塊確實是 malloc 來的）
+    if (!in_rom) free((void *)p);
+}
 static int font_count = 0;          // 幾個字
 static int font_height = 0;         // 每個字幾列
 static int glyph_bytes = 0;         // 每個字佔幾 byte：4 + 1 + height × 2
@@ -80,10 +113,10 @@ void gfx_reset(void)
     cam_y = 0;
     gfx_dpal_reset();
     for (int i = 1; i <= MAX_IMAGES; i++) {
-        free(images[i].pixels);   // free(NULL) 什麼都不做，是安全的
+        drop_copy(images[i].pixels, images[i].in_rom);   // free(NULL) 什麼都不做，是安全的
         images[i].pixels = NULL;
     }
-    free(font_data);
+    drop_copy(font_data, font_in_rom);
     font_data = NULL;
     font_count = 0;
 }
@@ -221,14 +254,15 @@ int gfx_image_new(int w, int h, const uint8_t *pixels, int tile)
     }
     if (id == 0) return 0;   // 圖片太多了
 
-    uint8_t *copy = malloc((size_t)w * (size_t)h);
+    int in_rom;
+    const uint8_t *copy = keep_copy(pixels, (size_t)w * (size_t)h, &in_rom);
     if (copy == NULL) return 0;   // 記憶體不夠
-    memcpy(copy, pixels, (size_t)w * (size_t)h);
 
     images[id].w = w;
     images[id].h = h;
     images[id].tile = tile > 0 ? tile : 16;
     images[id].pixels = copy;
+    images[id].in_rom = in_rom;
     return id;
 }
 
@@ -455,12 +489,13 @@ int gfx_font_new(int height, int count, const uint8_t *data)
         if (glyph_code(data + (size_t)n * size) <= glyph_code(data + (size_t)(n - 1) * size)) return -2;
     }
 
-    uint8_t *copy = malloc((size_t)count * size);
+    int in_rom;
+    const uint8_t *copy = keep_copy(data, (size_t)count * size, &in_rom);
     if (copy == NULL) return -1;
-    memcpy(copy, data, (size_t)count * size);
 
-    free(font_data);
+    drop_copy(font_data, font_in_rom);
     font_data = copy;
+    font_in_rom = in_rom;
     font_count = count;
     font_height = height;
     glyph_bytes = size;

@@ -67,6 +67,15 @@ int gfx_camera_y(void);
 // 成功回傳圖片編號（1 起算），失敗回傳 0
 int gfx_image_new(int w, int h, const uint8_t *pixels, int tile);
 
+// 平台可以提供「唯讀區」（主機：Flash）：圖片、字型的像素建好之後不會再改，
+// 放在唯讀區就不占 RAM。store 把 data 複製進唯讀區、回傳它在唯讀區的位址；
+// 空間不夠回傳 NULL，就照舊放在 RAM。沒設定（網頁版）＝ 全部放在 RAM
+typedef const uint8_t *(*GfxRomStore)(const uint8_t *data, size_t len);
+void gfx_set_rom_store(GfxRomStore store);
+
+// 其他模組（地圖）也用同一個唯讀區：有設定就存進去、回傳位址；沒設定或放不下回傳 NULL
+const uint8_t *gfx_rom_keep(const uint8_t *data, size_t len);
+
 // 畫圖片的一部分：從圖片 (sx, sy) 取 sw × sh 的範圍，畫到畫面 (dx, dy)，
 // 放大成 dw × dh（和 sw、sh 相同就是原尺寸）。flip_x、flip_y：左右、上下翻轉
 void gfx_sspr(int img, int sx, int sy, int sw, int sh,

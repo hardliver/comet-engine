@@ -51,6 +51,7 @@
 #include "../../core/luarom.h"
 #include "lauxlib.h"
 #include <sys/mman.h>
+#include <unistd.h>   // sysconf：記憶體頁的大小
 
 // 核心要求平台提供的功能：印出一行訊息
 void platform_log(const char *msg)
@@ -470,6 +471,22 @@ static int compile_nvc(const char *src, size_t len, const char *out_path)
 static char *rom_base;
 static size_t rom_cap = 8 * 1024 * 1024;
 static const void *rom_root;
+static size_t rom_used;   // 唯讀區用到哪裡（程式之後接著放圖片、字型）
+
+// 給 gfx 的唯讀區（gfx_set_rom_store）：接在後面放，放完立刻改回唯讀
+static const uint8_t *rom_store(const uint8_t *data, size_t len)
+{
+    size_t at = (rom_used + 3) & ~(size_t)3;   // 對齊到 4 bytes
+    if (at + len > rom_cap) return NULL;
+    // mprotect 以「頁」為單位（通常 4 KB 或 16 KB），範圍從頁的開頭算
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    size_t start = at / page * page;
+    mprotect(rom_base + start, at + len - start, PROT_READ | PROT_WRITE);
+    memcpy(rom_base + at, data, len);
+    mprotect(rom_base + start, at + len - start, PROT_READ);
+    rom_used = at + len;
+    return (const uint8_t *)rom_base + at;
+}
 
 static int rom_write(void *ud, size_t off, const void *data, size_t n)
 {
@@ -526,9 +543,12 @@ static int setup_rom(const char *nvc, size_t nlen, const char **head, size_t *he
     if (r) { printf("%s\n", err); return 1; }
     // 改成唯讀：之後 Lua 只要寫進這塊記憶體，程式就會立刻當掉（Segmentation fault）
     mprotect(rom_base, rom_cap, PROT_READ);
-    luarom_activate(rom_base, w.used);
+    // Lua 要知道的唯讀區範圍：整塊（之後放的圖片、字型也在裡面，但 Lua 不會碰到它們）
+    luarom_activate(rom_base, rom_cap);
     script_set_loader(rom_loader, NULL);
-    printf("唯讀區：%zu KB\n", w.used / 1024);
+    rom_used = w.used;
+    gfx_set_rom_store(rom_store);
+    printf("唯讀區：程式 %zu KB\n", w.used / 1024);
     return 0;
 }
 
@@ -746,6 +766,7 @@ int main(int argc, char **argv)
         return 1;
     }
     printf("%s：跑了 %u 幀，已存成 %s\n", path, engine_frame_count(), out);
+    if (rom_base != NULL) printf("唯讀區：共 %zu KB（程式 + 圖片、字型）\n", rom_used / 1024);
     if (wav_save() != 0) return 1;
 
     if (record_path != NULL) {
