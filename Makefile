@@ -100,6 +100,14 @@ check: build/mac web build/text_test.lua build/map_test.lua build/data_test.lua 
 		--game test/a tests/system/game_a.lua --game test/b tests/system/game_b.lua
 	./build/mac tests/pak/main.lua build/pak_test.ppm --pak build/pak_test.pak --record build/pak.rep
 	./build/mac tests/pak/main.lua build/pak_replay.ppm --pak build/pak_test.pak --replay build/pak.rep
+	# 主機的唯讀區（core/luarom）：freeze() 各種情況、--rom 執行結果和一般載入逐像素相同
+	./build/mac games/freeze_test.lua build/freeze.ppm | grep -q "FREEZE OK"
+	./build/mac games/freeze_test.lua --compile build/freeze_test.nvc
+	./build/mac games/freeze_test.lua build/freeze_rom.ppm --rom build/freeze_test.nvc | grep -q "FREEZE OK"
+	cmp build/freeze.ppm build/freeze_rom.ppm
+	./build/mac games/move_box.lua --compile build/move_box.nvc
+	./build/mac games/move_box.lua build/move_box_rom.ppm --rom build/move_box.nvc
+	cmp out.ppm build/move_box_rom.ppm
 	node tools/check_web.mjs
 
 clean:

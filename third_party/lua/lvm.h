@@ -105,9 +105,17 @@ typedef enum {
 ** Finish a fast set operation (when fast get succeeds). In that case,
 ** 'slot' points to the place to put the value.
 */
+#if !defined(LUA_ROM)
 #define luaV_finishfastset(L,t,slot,v) \
     { setobj2t(L, cast(TValue *,slot), v); \
       luaC_barrierback(L, gcvalue(t), v); }
+#else
+/* Comet/Nova: frozen tables (read-only memory) cannot be modified */
+#define luaV_finishfastset(L,t,slot,v) \
+    { if (l_unlikely(lua_isrom(gcvalue(t)))) luaH_frozen(L); \
+      setobj2t(L, cast(TValue *,slot), v); \
+      luaC_barrierback(L, gcvalue(t), v); }
+#endif
 
 
 /*

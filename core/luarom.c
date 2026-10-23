@@ -25,6 +25,8 @@
 #include "lfunc.h"
 #include "lgc.h"
 #include "lundump.h"
+#include "ltable.h"
+#include "ltm.h"
 
 // 某個型別需要的對齊（C99 沒有 _Alignof，用這個小技巧：
 // 把它放在一個 char 後面，編譯器補了幾個 byte，就是它的對齊）
@@ -485,5 +487,242 @@ int luarom_compile(lua_State *L, const char *src, size_t len, const char *name,
         return 1;
     }
     err[0] = '\0';
+    return 0;
+}
+
+// ============================================================================
+// 凍結表格（freeze）
+// ============================================================================
+// 做法和 luarom_build 一樣「先寫子、再寫父」：表格裡的字串、子表格先複製進唯讀區，
+// 拿到它們的新位址之後，才把這個表格的陣列部分、雜湊部分、表格本身寫進去。
+// 雜湊部分（Node 陣列）原封不動照抄：每個 key 在哪一格、鏈結的相對位置都不變，
+// 所以查表、pairs 的順序都和凍結前一模一樣（各平台結果才會一致）。
+
+static RomAppend rom_append = NULL;
+static char *fallback_arena;          // 沒有 Flash 的平台：借一塊 RAM 當唯讀區
+static size_t fallback_used;
+#define FALLBACK_SIZE (2 * 1024 * 1024)
+
+void luarom_set_append(RomAppend fn) { rom_append = fn; }
+
+void luarom_freeze_reset(void)
+{
+    // 上一款遊戲的 Lua 已經關掉，借來的那塊沒有人參照了，從頭用
+    fallback_used = 0;
+}
+
+static void *fallback_append(const void *data, size_t len, size_t align)
+{
+    size_t at = (fallback_used + align - 1) / align * align;
+    if (at + len > FALLBACK_SIZE) return NULL;
+    memcpy(fallback_arena + at, data, len);
+    fallback_used = at + len;
+    return fallback_arena + at;
+}
+
+// 已經凍結過的物件：RAM 的位址 → 唯讀區的位址（同一個子表格被參照兩次，只複製一次）
+typedef struct { const void *from; void *to; } PtrPair;
+typedef struct {
+    lua_State *L;
+    PtrPair *map;
+    size_t nmap, cap;
+    const char *err;      // 出錯的原因（NULL = 沒錯）
+} Freezer;
+
+#define IN_PROGRESS ((void *)1)   // 正在凍結中（用來發現「互相參照成環」）
+
+static void **map_slot(Freezer *f, const void *from)
+{
+    size_t mask = f->cap - 1;
+    size_t i = ((size_t)from >> 3) & mask;
+    while (f->map[i].from != NULL && f->map[i].from != from) i = (i + 1) & mask;
+    if (f->map[i].from == NULL) {
+        f->map[i].from = from;
+        f->nmap++;
+    }
+    return &f->map[i].to;
+}
+
+static int map_grow(Freezer *f)
+{
+    if ((f->nmap + 1) * 2 <= f->cap) return 0;
+    size_t ncap = f->cap * 2;
+    PtrPair *m = calloc(ncap, sizeof *m);
+    if (m == NULL) return 1;
+    for (size_t i = 0; i < f->cap; ++i) {
+        if (f->map[i].from == NULL) continue;
+        size_t j = ((size_t)f->map[i].from >> 3) & (ncap - 1);
+        while (m[j].from != NULL) j = (j + 1) & (ncap - 1);
+        m[j] = f->map[i];
+    }
+    free(f->map);
+    f->map = m;
+    f->cap = ncap;
+    return 0;
+}
+
+static void *fz_append(Freezer *f, const void *data, size_t len, size_t align)
+{
+    void *p = rom_append(data, len, align);
+    if (p == NULL && f->err == NULL) f->err = "freeze: 唯讀區空間不夠";
+    return p;
+}
+
+static TString *fz_string(Freezer *f, TString *s)
+{
+    if (lua_isrom(s)) return s;   // 本來就在唯讀區（程式裡的字串常數）
+    if (map_grow(f)) { f->err = "freeze: 記憶體不夠"; return s; }
+    void **slot = map_slot(f, s);
+    if (*slot != NULL) return *slot;
+    size_t l = tsslen(s);
+    size_t size = STR_HEAD + l + 1;
+    char *buf = malloc(size);
+    if (buf == NULL) { f->err = "freeze: 記憶體不夠"; return s; }
+    memcpy(buf, s, size);
+    TString *t = (TString *)buf;
+    t->next = NULL;
+    t->marked = 0;   // 灰色：GC 不會碰
+    if (t->tt == LUA_VSHRSTR) {
+        t->u.hnext = NULL;
+    } else {
+        t->hash = luaS_hashlongstr(s);   // 先在 RAM 那份算好雜湊（會寫 s，s 在 RAM 所以沒關係）
+        t->extra = 1;
+    }
+    TString *r = fz_append(f, buf, size, ALIGNOF(TString));
+    free(buf);
+    if (r == NULL) return s;
+    *map_slot(f, s) = r;
+    return r;
+}
+
+static Table *fz_table(Freezer *f, Table *t);
+
+// 把一個值換成唯讀區的版本（字串、表格）；不能凍結的東西記下錯誤
+static void fz_value(Freezer *f, TValue *v)
+{
+    switch (ttypetag(v)) {
+        case LUA_VNIL: case LUA_VFALSE: case LUA_VTRUE: case LUA_VEMPTY: case LUA_VABSTKEY:
+        case LUA_VNUMINT: case LUA_VNUMFLT:
+            return;   // 不是物件，照抄
+        case LUA_VSHRSTR: case LUA_VLNGSTR: {
+            TString *s = fz_string(f, tsvalue(v));
+            setsvalue(f->L, v, s);
+            return;
+        }
+        case LUA_VTABLE: {
+            Table *t = fz_table(f, hvalue(v));
+            sethvalue(f->L, v, t);
+            return;
+        }
+        default:
+            if (f->err == NULL) f->err = "freeze: 表格裡不能有函式、userdata 或 thread";
+            return;
+    }
+}
+
+static Table *fz_table(Freezer *f, Table *t)
+{
+    if (lua_isrom(t)) return t;   // 已經凍結
+    if (map_grow(f)) { f->err = "freeze: 記憶體不夠"; return t; }
+    void **slot = map_slot(f, t);
+    if (*slot == IN_PROGRESS) { f->err = "freeze: 表格互相參照（成環），不能凍結"; return t; }
+    if (*slot != NULL) return *slot;
+    if (t->metatable != NULL) { f->err = "freeze: 有 metatable 的表格不能凍結"; return t; }
+    *slot = IN_PROGRESS;
+
+    // metamethod 快取：這個表格如果被當成 metatable，Lua 會在 flags 記下「沒有 __index」之類的，
+    // 那是寫入。先算好全部記上（在唯讀區就不會再寫）。最高位元（BITRAS）照原本的
+    unsigned int flags = t->flags & BITRAS;
+    for (int e = 0; e <= TM_EQ; e++) {
+        if (isabstkey(luaH_getshortstr(t, G(f->L)->tmname[e]))) flags |= 1u << e;
+    }
+
+    unsigned int asize = luaH_realasize(t);
+    unsigned int nsize = isdummy(t) ? 0 : (unsigned int)sizenode(t);
+
+    // 陣列部分、雜湊部分先在 RAM 複製一份，把裡面的字串、子表格換成唯讀區的版本
+    TValue *arr = asize ? malloc(asize * sizeof(TValue)) : NULL;
+    Node *nodes = nsize ? malloc(nsize * sizeof(Node)) : NULL;
+    if ((asize && arr == NULL) || (nsize && nodes == NULL)) {
+        free(arr); free(nodes);
+        f->err = "freeze: 記憶體不夠";
+        return t;
+    }
+    for (unsigned int i = 0; i < asize; i++) {
+        arr[i] = t->array[i];
+        fz_value(f, &arr[i]);
+    }
+    for (unsigned int i = 0; i < nsize; i++) {
+        Node *n = &nodes[i];
+        *n = t->node[i];
+        fz_value(f, gval(n));
+        if (keyisdead(n)) {
+            n->u.key_val.gc = NULL;   // 已經刪掉的 key：指向的物件可能被回收，清掉
+        } else if (keyiscollectable(n)) {
+            TValue k;
+            getnodekey(f->L, &k, n);
+            fz_value(f, &k);
+            n->u.key_val = k.value_;
+        }
+    }
+
+    Table copy = *t;
+    copy.next = NULL;
+    copy.marked = 0;          // 灰色：GC 不會碰
+    copy.flags = (lu_byte)flags;
+    copy.metatable = NULL;
+    copy.gclist = NULL;
+    copy.array = NULL;
+    if (f->err == NULL && asize) copy.array = fz_append(f, arr, asize * sizeof(TValue), ALIGNOF(TValue));
+    if (f->err == NULL && nsize) {
+        Node *rn = fz_append(f, nodes, nsize * sizeof(Node), ALIGNOF(Node));
+        copy.node = rn;
+        // lastfree 只有新增 key 時才用（凍結的表格不會新增），但不能是 NULL（NULL 代表沒有雜湊部分）
+        if (rn != NULL) copy.lastfree = rn + (t->lastfree - t->node);
+    }
+    // 沒有雜湊部分（nsize == 0）：node 照舊指向 Lua 共用的空節點、lastfree 是 NULL
+    free(arr);
+    free(nodes);
+    if (f->err != NULL) { *map_slot(f, t) = NULL; return t; }
+
+    Table *r = fz_append(f, &copy, sizeof copy, ALIGNOF(Table));
+    *map_slot(f, t) = r != NULL ? r : NULL;
+    return r != NULL ? r : t;
+}
+
+int luarom_freeze(lua_State *L, int idx)
+{
+    if (!lua_istable(L, idx)) {
+        lua_pushstring(L, "freeze: 需要一個表格");
+        return 1;
+    }
+    if (rom_append == NULL && lua_rom_size != 0 && fallback_arena == NULL) {
+        // 平台已經有唯讀區（程式放在裡面）卻沒提供寫入方式：不能另外借一塊，
+        // 否則會蓋掉原本的唯讀區範圍，程式裡的字串就認不得了
+        lua_pushstring(L, "freeze: 平台沒有提供唯讀區的寫入方式");
+        return 1;
+    }
+    if (rom_append == NULL) {
+        // 沒有 Flash 的平台：第一次凍結時借一塊 RAM 當唯讀區
+        // （只有在還沒有唯讀區時才這樣做；主機、Mac 的 --rom 由平台設定 rom_append）
+        if (fallback_arena == NULL) {
+            fallback_arena = malloc(FALLBACK_SIZE);
+            if (fallback_arena == NULL) { lua_pushstring(L, "freeze: 記憶體不夠"); return 1; }
+            luarom_activate(fallback_arena, FALLBACK_SIZE);
+        }
+        rom_append = fallback_append;
+    }
+    Freezer f = { L, NULL, 0, 256, NULL };
+    f.map = calloc(f.cap, sizeof(PtrPair));
+    if (f.map == NULL) { lua_pushstring(L, "freeze: 記憶體不夠"); return 1; }
+    // lua_topointer：表格的話就是它的 Table 結構位址
+    Table *t = fz_table(&f, (Table *)lua_topointer(L, idx));
+    free(f.map);
+    if (f.err != NULL) {
+        lua_pushstring(L, f.err);
+        return 1;
+    }
+    sethvalue2s(L, L->top.p, t);
+    L->top.p++;
     return 0;
 }

@@ -556,6 +556,9 @@ static void exchangehashpart (Table *t1, Table *t2) {
 */
 void luaH_resize (lua_State *L, Table *t, unsigned int newasize,
                                           unsigned int nhsize) {
+#if defined(LUA_ROM)
+  if (l_unlikely(lua_isrom(t))) luaH_frozen(L);  /* Comet/Nova */
+#endif
   unsigned int i;
   Table newt;  /* to keep the new hash part */
   unsigned int oldasize = setlimittosize(t);
@@ -668,6 +671,9 @@ static Node *getfreepos (Table *t) {
 */
 static void luaH_newkey (lua_State *L, Table *t, const TValue *key,
                                                  TValue *value) {
+#if defined(LUA_ROM)
+  if (l_unlikely(lua_isrom(t))) luaH_frozen(L);  /* Comet/Nova */
+#endif
   Node *mp;
   TValue aux;
   if (l_unlikely(ttisnil(key)))
@@ -829,6 +835,9 @@ const TValue *luaH_get (Table *t, const TValue *key) {
 */
 void luaH_finishset (lua_State *L, Table *t, const TValue *key,
                                    const TValue *slot, TValue *value) {
+#if defined(LUA_ROM)
+  if (l_unlikely(lua_isrom(t))) luaH_frozen(L);  /* Comet/Nova */
+#endif
   if (isabstkey(slot))
     luaH_newkey(L, t, key, value);
   else
@@ -847,6 +856,9 @@ void luaH_set (lua_State *L, Table *t, const TValue *key, TValue *value) {
 
 
 void luaH_setint (lua_State *L, Table *t, lua_Integer key, TValue *value) {
+#if defined(LUA_ROM)
+  if (l_unlikely(lua_isrom(t))) luaH_frozen(L);  /* Comet/Nova */
+#endif
   const TValue *p = luaH_getint(t, key);
   if (isabstkey(p)) {
     TValue k;
@@ -939,13 +951,21 @@ static unsigned int binsearch (const TValue *array, unsigned int i,
 ** (In those cases, the boundary is not inside the array part, and
 ** therefore cannot be used as a new limit.)
 */
+#if defined(LUA_ROM)
+/* Comet/Nova: writing to a frozen table (it lives in read-only memory) */
+l_noret luaH_frozen (lua_State *L) {
+  luaG_runerror(L, "attempt to modify a frozen table");
+}
+#endif
+
+
 lua_Unsigned luaH_getn (Table *t) {
   unsigned int limit = t->alimit;
   if (limit > 0 && isempty(&t->array[limit - 1])) {  /* (1)? */
     /* there must be a boundary before 'limit' */
     if (limit >= 2 && !isempty(&t->array[limit - 2])) {
       /* 'limit - 1' is a boundary; can it be a new limit? */
-      if (ispow2realasize(t) && !ispow2(limit - 1)) {
+      if (ispow2realasize(t) && !ispow2(limit - 1) && !lua_isrom(t)) {
         t->alimit = limit - 1;
         setnorealasize(t);  /* now 'alimit' is not the real size */
       }
@@ -954,7 +974,8 @@ lua_Unsigned luaH_getn (Table *t) {
     else {  /* must search for a boundary in [0, limit] */
       unsigned int boundary = binsearch(t->array, 0, limit);
       /* can this boundary represent the real size of the array? */
-      if (ispow2realasize(t) && boundary > luaH_realasize(t) / 2) {
+      if (ispow2realasize(t) && boundary > luaH_realasize(t) / 2 &&
+          !lua_isrom(t)) {
         t->alimit = boundary;  /* use it as the new limit */
         setnorealasize(t);
       }
@@ -972,7 +993,8 @@ lua_Unsigned luaH_getn (Table *t) {
       /* there must be a boundary in the array after old limit,
          and it must be a valid new limit */
       unsigned int boundary = binsearch(t->array, t->alimit, limit);
-      t->alimit = boundary;
+      if (!lua_isrom(t))  /* Comet/Nova: a hint only; frozen tables skip it */
+        t->alimit = boundary;
       return boundary;
     }
     /* else, new limit is present in the table; check the hash part */

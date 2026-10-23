@@ -944,6 +944,9 @@ LUA_API int lua_setmetatable (lua_State *L, int objindex) {
   }
   switch (ttype(obj)) {
     case LUA_TTABLE: {
+#if defined(LUA_ROM)
+      if (l_unlikely(lua_isrom(hvalue(obj)))) luaH_frozen(L);  /* Comet/Nova */
+#endif
       hvalue(obj)->metatable = mt;
       if (mt) {
         luaC_objbarrier(L, gcvalue(obj), mt);

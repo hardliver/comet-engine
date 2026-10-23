@@ -365,6 +365,9 @@ void luaV_finishset (lua_State *L, const TValue *t, TValue *key,
          for the barrier. 't' and 'slot' can point to the same value,
          and so the assignment can change 't' value */
       GCObject *h = gcvalue(t);
+#if defined(LUA_ROM)
+      if (l_unlikely(lua_isrom(h))) luaH_frozen(L);  /* Comet/Nova */
+#endif
       setobj2t(L, cast(TValue *,slot), val);
       luaC_barrierback(L, h, val);
       return;  /* done */
@@ -1111,6 +1114,16 @@ void luaV_finishOp (lua_State *L) {
 ** Correct global 'pc'.
 */
 #define savepc(L)	(ci->u.l.savedpc = pc)
+
+#if defined(LUA_ROM)
+/* Comet/Nova: inside the interpreter, save 'pc' before the frozen-table
+** error so the error message shows the right line */
+#undef luaV_finishfastset
+#define luaV_finishfastset(L,t,slot,v) \
+    { if (l_unlikely(lua_isrom(gcvalue(t)))) { savepc(L); luaH_frozen(L); } \
+      setobj2t(L, cast(TValue *,slot), v); \
+      luaC_barrierback(L, gcvalue(t), v); }
+#endif
 
 
 /*

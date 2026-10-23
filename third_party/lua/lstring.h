@@ -45,9 +45,6 @@
 ** outside the string table, so a ROM string and a RAM string with the
 ** same contents can have different addresses. Compare their contents
 ** in that case. See core/luarom.h. */
-extern char *lua_rom_base;
-extern size_t lua_rom_size;
-#define lua_isrom(p)	((size_t)((char *)(p) - lua_rom_base) < lua_rom_size)
 LUAI_FUNC int luaS_eqshrrom (TString *a, TString *b);
 #define eqshrstr(a,b)	((a) == (b) || \
 	((lua_isrom(a) || lua_isrom(b)) && luaS_eqshrrom(a, b)))

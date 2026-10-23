@@ -43,6 +43,9 @@ LUAI_FUNC const TValue *luaH_getstr (Table *t, TString *key);
 LUAI_FUNC const TValue *luaH_get (Table *t, const TValue *key);
 LUAI_FUNC void luaH_set (lua_State *L, Table *t, const TValue *key,
                                                  TValue *value);
+#if defined(LUA_ROM)
+LUAI_FUNC l_noret luaH_frozen (lua_State *L);  /* Comet/Nova */
+#endif
 LUAI_FUNC void luaH_finishset (lua_State *L, Table *t, const TValue *key,
                                        const TValue *slot, TValue *value);
 LUAI_FUNC Table *luaH_new (lua_State *L);

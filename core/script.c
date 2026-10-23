@@ -12,6 +12,7 @@
 #include "lualib.h"
 
 #include "script.h"
+#include "luarom.h"
 #include "engine.h"
 #include "gfx.h"
 #include "map.h"
@@ -467,7 +468,17 @@ static int l_mset(lua_State *L)
 static int l_mapw(lua_State *L) { lua_pushinteger(L, map_w((int)luaL_checkinteger(L, 1))); return 1; }
 static int l_maph(lua_State *L) { lua_pushinteger(L, map_h((int)luaL_checkinteger(L, 1))); return 1; }
 
+// freeze(t)：把載入後只讀不寫的表格（含裡面的子表格、字串）凍結，回傳凍結後的版本。
+// 主機上放在 Flash，不占 RAM；凍結後寫入會出錯。用法：DATA = freeze(DATA)
+static int l_freeze(lua_State *L)
+{
+    luaL_checktype(L, 1, LUA_TTABLE);
+    if (luarom_freeze(L, 1) != 0) return lua_error(L);   // 錯誤訊息已經在堆疊上
+    return 1;
+}
+
 static const luaL_Reg api[] = {
+    { "freeze", l_freeze },
     { "cls",   l_cls   },
     { "pset",  l_pset  },
     { "rect",  l_rect  },
@@ -572,6 +583,7 @@ int script_load(const char *src, size_t len, const char *name, int is_system)
     failed = 0;
     rng_state = load_seed;   // 同一個種子 → 同一串亂數
 
+    luarom_freeze_reset();   // 上一款遊戲凍結的表格不要了
     L = luaL_newstate();
     if (L == NULL) {
         platform_log("記憶體不足，無法啟動 Lua");

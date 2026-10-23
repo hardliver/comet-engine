@@ -20,8 +20,8 @@ Mac（無頭模擬器，開發測試用）、網頁（WebAssembly）、Nova One 
 - **`core/` 是純 C 核心**：不碰檔案、視窗、硬體。平台相關的東西放 `platform/`，透過 `core/platform.h` 介面。
 - **`third_party/lua/` 原則上不修改**。Lua 的設定放 `core/comet_lua_user.h`。
   唯一的例外（2026-10-23 作者同意）：`LUA_ROM`——讓程式和字串放在 Flash（見 `core/luarom.h`）。
-  修改都用 `#if defined(LUA_ROM)` 包起來、加註「Comet/Nova」，目前只有 `lstring.h`、`lstring.c`、`ltable.c` 三處。
-  升級 Lua 時要把這三處搬過去。
+  修改都用 `#if defined(LUA_ROM)` 包起來、加註「Comet/Nova」：`lobject.h`（唯讀區範圍）、`lstring.h`／`lstring.c`（短字串比內容）、
+  `ltable.h`／`ltable.c`、`lvm.h`／`lvm.c`、`lapi.c`（凍結的表格不能寫）。用 `grep -n "Comet/Nova" third_party/lua/*` 可以全部找到，升級 Lua 時要搬過去。
 - **決定性（determinism）**：同一串按鍵，Mac 版與網頁版輸出**逐像素相同**；`rnd` 各平台結果相同；重播檔能完全重現。任何改動都不能破壞這點。
 - **為主機設想**：Pico 2 W 記憶體很小。新功能要考慮記憶體用量，大資料走資源包（pak），不要假設有充足 RAM。
 - **引擎是給所有遊戲用的**：Wildkin 需要的功能要做成通用 API，不要寫進只有 Wildkin 用得到的邏輯。

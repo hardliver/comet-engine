@@ -1,7 +1,6 @@
 # Comet
 
 Nova One 的遊戲引擎。同一份 C 核心，編譯到三個平台：Mac（開發測試）、網頁（WebAssembly）、Nova One 主機（Pico 2 W）。
-主機版的平台層在 `platform/pico/`（編譯方式、接線見該資料夾的 README）。
 
 遊戲是一個 Lua 文字檔，改遊戲不用重新編譯引擎。
 
@@ -116,6 +115,7 @@ function _draw()   end   -- 每幀一次：畫畫面
 - 同一串按鍵，Mac 版與網頁版輸出逐像素相同（`make check`）
 - 重播：遊玩頁從開局就一直錄，按「下載重播」得到 `.rep`（從頭到現在，錄影繼續）；把 `.rep` 拖進遊玩頁就用目前的遊戲播放，播完顯示最後的畫面是否一致，之後可接著玩。每次開局用新的亂數種子（記在重播檔裡）；Studio 與自動測試固定用種子 1
 - 系統卡匣：`engine_load_system()` 載入的卡匣多一個 `sys` 表格（`sys.games()`、`sys.launch(id)`、`sys.last_game()`），一般遊戲沒有。同一時間只有一個 Lua 環境：啟動遊戲時關掉系統卡匣，回 HOME（HOME 鍵，或按住 Start＋Select 0.5 秒）時重新載入。載入哪個檔案由平台決定（引擎只發出請求），網頁版的大廳在 nova-system
+- 凍結表格：`freeze(t)` 把載入後只讀不寫的表格（含子表格、字串）複製到唯讀區並回傳它，寫入會出錯（`core/luarom.h`）。主機放 Flash；網頁、Mac 借一塊 RAM 當唯讀區，行為一致。Mac 版 `--compile 檔.nvc` 產生主機卡匣、`--rom 檔.nvc` 用主機的方式執行（程式、圖片、字型、地圖、凍結的表格放在 mprotect 唯讀的記憶體）
 - 存檔：`save(欄位, 值)`、`loadsave(欄位)`，8 個欄位、每個最多 16 KB。網頁版存在瀏覽器的 localStorage（依遊戲 id 分開，同一個網址的遊玩頁和 Studio 共用）；Mac 版用 `--saves`。播放重播時從重播檔讀、不寫入
 - 聲音：`sfx`、`music`，資料在 `comet.json` 的 `"sfx"` 檔（格式見 AI_GUIDE「音效與音樂」）。C 核心合成，22050 Hz、16 位元、4 聲道；每一幀剛好算出 1/60 秒（367 或 368 個取樣），所以 Mac 版和網頁版的聲音逐 byte 相同（`make check`）。網頁用 AudioWorklet 播（玩家點過畫面或按過鍵才出聲，遊玩頁 M 鍵或 🔊 開關）；Mac 版用 `--wav 檔.wav` 存下來聽。Studio 的音效編輯器：打開 sfx 檔，按住拖曳畫音符、右鍵休止，下面編音樂的段落，▶ 試聽
 - 現實時鐘：`clock()`。網頁用瀏覽器的時間（本地時區）；Mac 版用 `--clock now` 或 `--clock 2026-10-22T14:05`（從那一刻起每 60 幀走 1 秒，沒加就是沒有時間來源）；主機之後用 RTC 或 WiFi 對時。讀到的時間記進重播檔（重播檔第 2 版），重播時讀重播檔裡的時間

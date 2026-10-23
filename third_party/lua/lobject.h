@@ -397,6 +397,18 @@ typedef struct TString {
 
 
 
+#if defined(LUA_ROM)
+/* Comet/Nova (LUA_ROM): objects (strings, prototypes, frozen tables)
+** may live in a read-only memory range (Flash on the console). They are
+** never collected or written; see core/luarom.h. */
+extern char *lua_rom_base;
+extern size_t lua_rom_size;
+#define lua_isrom(p)	((size_t)((char *)(p) - lua_rom_base) < lua_rom_size)
+#else
+#define lua_isrom(p)	0
+#endif
+
+
 /*
 ** Get the actual string (array of bytes) from a 'TString'. (Generic
 ** version and specialized versions for long and short strings.)

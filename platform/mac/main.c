@@ -473,10 +473,10 @@ static size_t rom_cap = 8 * 1024 * 1024;
 static const void *rom_root;
 static size_t rom_used;   // 唯讀區用到哪裡（程式之後接著放圖片、字型）
 
-// 給 gfx 的唯讀區（gfx_set_rom_store）：接在後面放，放完立刻改回唯讀
-static const uint8_t *rom_store(const uint8_t *data, size_t len)
+// 接在唯讀區後面寫（圖片、字型、地圖、凍結的表格都用這個），寫完立刻改回唯讀
+static void *rom_append(const void *data, size_t len, size_t align)
 {
-    size_t at = (rom_used + 3) & ~(size_t)3;   // 對齊到 4 bytes
+    size_t at = (rom_used + align - 1) / align * align;
     if (at + len > rom_cap) return NULL;
     // mprotect 以「頁」為單位（通常 4 KB 或 16 KB），範圍從頁的開頭算
     size_t page = (size_t)sysconf(_SC_PAGESIZE);
@@ -485,7 +485,13 @@ static const uint8_t *rom_store(const uint8_t *data, size_t len)
     memcpy(rom_base + at, data, len);
     mprotect(rom_base + start, at + len - start, PROT_READ);
     rom_used = at + len;
-    return (const uint8_t *)rom_base + at;
+    return rom_base + at;
+}
+
+// 給 gfx（gfx_set_rom_store）
+static const uint8_t *rom_store(const uint8_t *data, size_t len)
+{
+    return rom_append(data, len, 4);
 }
 
 static int rom_write(void *ud, size_t off, const void *data, size_t n)
@@ -548,6 +554,7 @@ static int setup_rom(const char *nvc, size_t nlen, const char **head, size_t *he
     script_set_loader(rom_loader, NULL);
     rom_used = w.used;
     gfx_set_rom_store(rom_store);
+    luarom_set_append(rom_append);
     printf("唯讀區：程式 %zu KB\n", w.used / 1024);
     return 0;
 }

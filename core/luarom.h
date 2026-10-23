@@ -51,6 +51,22 @@ void luarom_activate(const char *base, size_t size);
 // 效果和 luaL_loadbuffer 成功時一樣
 void luarom_push_main(lua_State *L, const void *root);
 
+// ---- 凍結表格（遊戲的 freeze(t)）----
+// 遊戲載入後只讀不寫的大表格（例如從 JSON 產生的資料），可以整個複製進唯讀區，
+// RAM 裡的原本那份就變成垃圾被回收。凍結後的表格寫入會出錯（attempt to modify a frozen table），
+// 每個平台都一樣：沒有 Flash 的平台（網頁）借一塊 RAM 當唯讀區，行為才會一致。
+
+// 平台提供「接在唯讀區後面寫」：回傳寫入的位址；空間不夠回傳 NULL
+typedef void *(*RomAppend)(const void *data, size_t len, size_t align);
+void luarom_set_append(RomAppend fn);
+
+// 凍結堆疊上 idx 位置的表格：成功在堆疊上放唯讀版本、回傳 0；
+// 失敗在堆疊上放錯誤訊息、回傳 1（表格裡有函式、有 metatable、互相參照成環…）
+int luarom_freeze(lua_State *L, int idx);
+
+// 換遊戲時呼叫（script_load）：沒有 Flash 的平台把借來的那塊從頭用
+void luarom_freeze_reset(void);
+
 // 把原始碼編譯成位元組碼，寫到 out（用 lua_dump，保留除錯資訊：錯誤訊息才有行號）。
 // 成功回傳 0
 int luarom_compile(lua_State *L, const char *src, size_t len, const char *name,
