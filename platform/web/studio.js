@@ -10,12 +10,13 @@ import {
     EditorView, basicSetup, keymap, EditorState, StateEffect, StateField,
     Decoration, indentWithTab, StreamLanguage, indentUnit, lua, oneDark,
 } from "./vendor/codemirror.js";
-import { createEngine, startLoop } from "./comet.js";
+import { createEngine, startLoop, createAudio } from "./comet.js";
 import { setupKeyboard, readGamepad, merge } from "./input.js";
 import { buildCart, buildImages, buildMaps, buildData, dataFiles, dataEntries, imageEntries, imageFiles, mapFiles, mapLine, browserInflate, fontTextFiles, fontTextCode } from "./cart.js";
 import { createImageViewer } from "./imageview.js";
 import { createMapEditor, newMapText } from "./mapedit.js";
 import { createDataEditor } from "./dataedit.js";
+import { createSfxEditor } from "./sfxedit.js";
 import { buildFont, fontSummary } from "./font.js";
 import { createDebugPanel } from "./debugpanel.js";
 
@@ -277,6 +278,14 @@ function autoRun() {
 // ============================================================
 
 const engine = await createEngine({ onLog });
+// 聲音（core/audio.h）：第一次點、按鍵之後才打開（瀏覽器的規定）；上面的 🔊 可以關掉
+const audio = createAudio();
+engine.setAudio(audio);
+for (const ev of ["pointerdown", "keydown"]) window.addEventListener(ev, () => audio.start(), { capture: true });
+$("btn-sound").addEventListener("click", () => {
+    audio.setMuted(!audio.muted);
+    $("btn-sound").textContent = audio.muted ? "🔇" : "🔊";
+});
 const keyboard = setupKeyboard();
 const canvas = $("screen");
 
@@ -355,6 +364,17 @@ async function mapChanged(text) {
 
 // 資料表編輯器：點檔案分頁裡的資料檔（comet.json 的 data）時，取代左邊的程式碼編輯器
 const dataEditor = createDataEditor({ root: $("dataedit"), toast, onChange: dataChanged });
+// 音效編輯器（Studio 清單 19）：comet.json 的 sfx 檔。存檔、重新合併和資料檔共用（dataChanged）；
+// 試聽是叫正在跑的遊戲執行 sfx("名字")（engine.eval；會停掉正在錄的重播，Studio 裡沒關係）
+const sfxEditor = createSfxEditor({
+    root: $("sfxedit"), toast, onChange: dataChanged,
+    onPreview: (code) => {
+        audio.start();
+        const r = engine.eval(code, 0);
+        if (!r.ok) toast(r.text.includes("沒有") ? r.text + "（遊戲還沒用新的音效重新執行？按 ▶ 重新執行）" : r.text, 5000);
+    },
+});
+const isSfxFile = (p) => folder && folder.project.sfx === p;
 let dataSaveTimer = null;
 
 const isDataOpen = () => folder && folder.data.has(folder.current);
@@ -738,8 +758,11 @@ async function openFile(path) {
     folder.current = path;
     $("editor").hidden = isMap || isData;
     $("mapedit").hidden = !isMap;
-    $("dataedit").hidden = !isData;
-    if (isData) {
+    $("dataedit").hidden = !isData || isSfxFile(path);
+    $("sfxedit").hidden = !isSfxFile(path);
+    if (isSfxFile(path)) {
+        sfxEditor.open(path, folder.data.get(path).text);
+    } else if (isData) {
         dataEditor.open(path, folder.data.get(path).text, dataRefs());
     } else if (isMap) {
         try {
@@ -773,6 +796,7 @@ function saveUi() {
 const fileExists = (p) => folder.files.has(p) || folder.maps.has(p) || folder.data.has(p);
 function fileLabel(path) {
     if (folder.maps.has(path)) return "🗺 " + path.replace(/^maps\//, "");
+    if (isSfxFile(path)) return "🔊 " + path;
     if (folder.data.has(path)) return "📋 " + path.replace(/^data\//, "");
     return path.replace(/^src\//, "");
 }

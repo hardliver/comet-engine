@@ -246,7 +246,8 @@ export function dataEntries(project) {
 }
 
 export function dataFiles(project) {
-    return dataEntries(project).map((e) => e.file);
+    // 音效檔（comet.json 的 sfx）也算：改了要重新合併
+    return [...dataEntries(project).map((e) => e.file), ...(project.sfx ? [project.sfx] : [])];
 }
 
 // Lua 的名稱規則（英文、數字、底線，不能數字開頭），而且不是 Lua 的保留字，才能寫成 key = 的形式
@@ -282,10 +283,85 @@ function luaValue(v, where, indent) {
     return `{\n${pairs.map((x) => inner + x).join(",\n")}\n${indent}}`;
 }
 
-// 把 comet.json 的 data 轉成一段 Lua 程式碼。readText(path)：讀檔，回傳文字
+// ============================================================
+// 音效檔（comet.json 的 "sfx": "sfx.json"，見 core/audio.h）
+// ============================================================
+// {
+//   "sfx":   { "hit": { "speed": 3, "notes": [ [音高, 波形, 音量, 效果], … ], "loop": [開始, 結束] } },
+//   "music": { "battle": { "patterns": [ ["低音", "旋律", "", ""], … ], "loop": 0 } }
+// }
+// 遊戲裡變成 SFX.hit = { speed = 3, notes = "十六進位字串" }、MUSIC.battle = { patterns = …, loop = 0 }。
+// 音符壓成一個字串（每個音符 4 個十六進位字）而不是一個個小表格：主機（Pico）上一個 Lua 小表格要幾十 bytes，
+// 32 個音符就是好幾 KB；字串只要 128 bytes。引擎播的時候再拆開（core/audio.c 的 read_sound）
+export const SFX_LIMITS = { notes: 32, pitch: 63, wave: 4, vol: 7, fx: 3, speed: 255, channels: 4, patterns: 64 };
+
+// 一個音符 → 4 個十六進位字（音高低 6 位、波形 3 位、音量 3 位、效果 3 位）
+export function noteHex([pitch, wave, vol, fx]) {
+    return (pitch | (wave << 6) | (vol << 9) | (fx << 12)).toString(16).padStart(4, "0");
+}
+
+export function buildSfx(json, file) {
+    const L = SFX_LIMITS;
+    const int = (v, lo, hi, where) => {
+        if (!Number.isInteger(v) || v < lo || v > hi) throw new Error(`${file} 的 ${where} 要是 ${lo}–${hi} 的整數（現在是 ${JSON.stringify(v)}）`);
+        return v;
+    };
+    const lines = ["SFX = {}"];
+    const names = new Set();
+    for (const [name, s] of Object.entries(json.sfx || {})) {
+        const at = `sfx.${name}`;
+        if (!/^[A-Za-z0-9_]{1,23}$/.test(name)) throw new Error(`${file} 的音效名稱「${name}」只能用英文、數字、底線，最多 23 個字`);
+        int(s.speed, 1, L.speed, `${at}.speed`);
+        if (!Array.isArray(s.notes) || s.notes.length < 1 || s.notes.length > L.notes) throw new Error(`${file} 的 ${at}.notes 要有 1–${L.notes} 個音符`);
+        const hex = s.notes.map((n, i) => {
+            if (!Array.isArray(n) || n.length !== 4) throw new Error(`${file} 的 ${at}.notes[${i}] 要是 [音高, 波形, 音量, 效果]`);
+            int(n[0], 0, L.pitch, `${at}.notes[${i}] 的音高`);
+            int(n[1], 0, L.wave, `${at}.notes[${i}] 的波形`);
+            int(n[2], 0, L.vol, `${at}.notes[${i}] 的音量`);
+            int(n[3], 0, L.fx, `${at}.notes[${i}] 的效果`);
+            return noteHex(n);
+        }).join("");
+        let loop = "";
+        if (s.loop !== undefined) {
+            if (!Array.isArray(s.loop) || s.loop.length !== 2) throw new Error(`${file} 的 ${at}.loop 要是 [開始, 結束]`);
+            int(s.loop[0], 0, s.notes.length - 1, `${at}.loop[0]`);
+            int(s.loop[1], s.loop[0], s.notes.length - 1, `${at}.loop[1]`);
+            loop = `, loop = { ${s.loop[0]}, ${s.loop[1]} }`;
+        }
+        names.add(name);
+        lines.push(`SFX[${luaString(name)}] = { speed = ${s.speed}, notes = "${hex}"${loop} }`);
+    }
+    lines.push("MUSIC = {}");
+    for (const [name, m] of Object.entries(json.music || {})) {
+        const at = `music.${name}`;
+        if (!Array.isArray(m.patterns) || m.patterns.length < 1 || m.patterns.length > L.patterns) throw new Error(`${file} 的 ${at}.patterns 要有 1–${L.patterns} 段`);
+        const pats = m.patterns.map((p, i) => {
+            if (!Array.isArray(p) || p.length > L.channels) throw new Error(`${file} 的 ${at}.patterns[${i}] 要是最多 ${L.channels} 個音效名稱（""＝不出聲）`);
+            for (const x of p) {
+                if (x !== "" && !names.has(x)) throw new Error(`${file} 的 ${at}.patterns[${i}] 用到「${x}」，但 sfx 裡沒有這個音效`);
+            }
+            return `{ ${p.map((x) => luaString(x)).join(", ")} }`;
+        });
+        const loop = m.loop === undefined ? "" : `, loop = ${int(m.loop, 0, m.patterns.length - 1, `${at}.loop`)}`;
+        lines.push(`MUSIC[${luaString(name)}] = { patterns = { ${pats.join(", ")} }${loop} }`);
+    }
+    return lines.join("\n");
+}
+
+// 把 comet.json 的 data（和 sfx）轉成一段 Lua 程式碼。readText(path)：讀檔，回傳文字
 export async function buildData(project, readText) {
     const entries = dataEntries(project);
-    if (entries.length === 0) return "";
+    let sfxCode = "";
+    if (project.sfx) {
+        let json;
+        try {
+            json = JSON.parse(await readText(project.sfx));
+        } catch (err) {
+            throw new Error(`音效檔 ${project.sfx} 讀取失敗：${err.message}`);
+        }
+        sfxCode = "-- ==================== 音效（comet.json 的 sfx，自動產生） ====================\n" + buildSfx(json, project.sfx);
+    }
+    if (entries.length === 0) return sfxCode;
     const lines = [
         "-- ==================== 資料檔（comet.json 的 data，自動產生） ====================",
         "DATA = {}",
@@ -300,6 +376,7 @@ export async function buildData(project, readText) {
         }
         lines.push(`DATA.${e.name} = ${luaValue(json, e.file + " 的 ", "")}`);
     }
+    if (sfxCode) lines.push(sfxCode);
     return lines.join("\n");
 }
 

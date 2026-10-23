@@ -16,6 +16,7 @@
 //   加上 --clock 時間：遊戲的 clock() 讀到的現實時間。「now」= 這台電腦現在的時間，
 //     或寫成 2026-10-22T14:05（秒可省略）。時間從那一刻開始，每 60 幀走 1 秒（跟著幀數走，結果每次一樣）。
 //     沒加就是「沒有時間來源」，clock() 回傳 nil（測試的結果不會因為哪天跑而不同）
+//   加上 --wav 檔.wav：這次執行所有的聲音存成 WAV（22050 Hz、16 位元、單聲道），可以聽、也可以比對（見 core/audio.h）
 //   加上 --profile：運算預算（Level 1）。跑完印出平均、最重的 5 幀（第幾幀、Lua 指令、像素、繪圖呼叫、預估 Pico 負載 %）
 //   ./build/mac 系統卡匣.lua 輸出圖檔 --system --game id 遊戲.lua [--game id 遊戲.lua …]
 //                                                    Nova 模式：載入系統卡匣，用另一組預先寫好的按鍵
@@ -30,6 +31,7 @@
 #include <string.h>
 #include <time.h>
 #include "../../core/engine.h"
+#include "../../core/audio.h"
 #include "../../core/clock.h"
 #include "../../core/gfx.h"
 #include "../../core/input.h"
@@ -73,6 +75,51 @@ static int parse_clock(const char *s)
     if (sscanf(s, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &sec) < 5) return 1;
     if (mo < 1 || mo > 12 || d < 1 || d > 31 || h < 0 || h > 23 || mi < 0 || mi > 59 || sec < 0 || sec > 59) return 1;
     clock_start = clock_from_date(y, mo, d, h, mi, sec);
+    return 0;
+}
+
+// ---- 聲音（--wav）----
+// 每跑完一幀，把這一幀的聲音接在後面；最後存成 WAV 檔。
+// 記憶體用 realloc 慢慢變大：一分鐘的聲音 = 22050 × 60 × 2 bytes ≈ 2.6 MB，在電腦上沒問題
+static const char *wav_path = NULL;
+static int16_t *wav = NULL;
+static size_t wav_len = 0, wav_cap = 0;
+
+static void wav_collect(void)
+{
+    if (wav_path == NULL) return;
+    int n = audio_sample_count();
+    if (wav_len + (size_t)n > wav_cap) {
+        size_t cap = wav_cap ? wav_cap * 2 : 65536;
+        int16_t *p = realloc(wav, cap * sizeof(int16_t));
+        if (p == NULL) return;
+        wav = p;
+        wav_cap = cap;
+    }
+    memcpy(wav + wav_len, audio_samples(), (size_t)n * sizeof(int16_t));
+    wav_len += (size_t)n;
+}
+
+// WAV 檔頭：44 bytes，所有數字都是 little-endian（低位元組在前）
+static void put32(FILE *f, uint32_t v) { for (int i = 0; i < 4; i++) fputc((int)((v >> (i * 8)) & 255), f); }
+static void put16(FILE *f, uint16_t v) { fputc(v & 255, f); fputc(v >> 8, f); }
+
+static int wav_save(void)
+{
+    if (wav_path == NULL) return 0;
+    FILE *f = fopen(wav_path, "wb");
+    if (f == NULL) {
+        printf("無法建立檔案 %s\n", wav_path);
+        return 1;
+    }
+    uint32_t bytes = (uint32_t)(wav_len * 2);
+    fwrite("RIFF", 1, 4, f); put32(f, 36 + bytes); fwrite("WAVE", 1, 4, f);
+    fwrite("fmt ", 1, 4, f); put32(f, 16); put16(f, 1); put16(f, 1);   // PCM、單聲道
+    put32(f, AUDIO_RATE); put32(f, AUDIO_RATE * 2); put16(f, 2); put16(f, 16);
+    fwrite("data", 1, 4, f); put32(f, bytes);
+    for (size_t i = 0; i < wav_len; i++) put16(f, (uint16_t)wav[i]);
+    fclose(f);
+    printf("聲音 %s：%.1f 秒\n", wav_path, (double)wav_len / AUDIO_RATE);
     return 0;
 }
 
@@ -400,6 +447,8 @@ int main(int argc, char **argv)
                 printf("--clock 的格式：now 或 2026-10-22T14:05\n");
                 return 1;
             }
+        } else if (strcmp(argv[i], "--wav") == 0 && i + 1 < argc) {
+            wav_path = argv[++i];
         } else if (strcmp(argv[i], "--profile") == 0) {
             profile = 1;
         } else if (strcmp(argv[i], "--system") == 0) {
@@ -471,6 +520,7 @@ int main(int argc, char **argv)
         // 一直跑到播完。平台不交輸入：輸入全部來自重播檔
         while (replay_state() == REPLAY_PLAYING) {
             engine_frame();
+            wav_collect();
         }
         if (replay_state() != REPLAY_FINISHED) {
             return 1;   // 播放途中發現重播檔損壞
@@ -478,6 +528,7 @@ int main(int argc, char **argv)
         if (save_ppm(out) != 0) {
             return 1;
         }
+        if (wav_save() != 0) return 1;
         int same = replay_matched();
         printf("%s：重播 %u 幀，最後的畫面%s，已存成 %s\n",
                path, replay_frames(), same ? "一致" : "不同", out);
@@ -502,6 +553,7 @@ int main(int argc, char **argv)
             scripted_input(i);
         }
         engine_frame();
+        wav_collect();
         if (profile) {
             uint32_t ld = engine_prof_load();
             sum_load += ld;
@@ -548,6 +600,7 @@ int main(int argc, char **argv)
         return 1;
     }
     printf("%s：跑了 %u 幀，已存成 %s\n", path, engine_frame_count(), out);
+    if (wav_save() != 0) return 1;
 
     if (record_path != NULL) {
         const uint8_t *rep = replay_snapshot();

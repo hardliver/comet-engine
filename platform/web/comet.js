@@ -91,8 +91,78 @@ export function browserClock() {
     return Math.floor(now.getTime() / 1000) - now.getTimezoneOffset() * 60;
 }
 
+// ---- 聲音 ----
+// 引擎每跑一幀，就算出 1/60 秒的聲音（22050 Hz、16 位元）。這裡把它送到喇叭：
+//   AudioWorklet 是瀏覽器專門處理聲音的執行緒，每次要 128 個取樣。中間用一個「環狀緩衝區」接起來：
+//   遊戲那邊每幀放進去、聲音執行緒一直拿出來；拿到底（沒東西）就出安靜，等存夠一點再繼續（避免斷斷續續）
+//   瀏覽器的取樣率通常是 44100 或 48000，不是 22050：用線性內插換算（兩個取樣之間照比例取中間值）
+//   太多沒播的（例如 Studio 的 ×4 快轉）就丟掉舊的，延遲不會越來越大
+const WORKLET = `
+class CometAudio extends AudioWorkletProcessor {
+    constructor() {
+        super();
+        this.size = 16384;                       // 2 的次方：位置用 & (size - 1) 就能繞回開頭
+        this.buf = new Float32Array(this.size);
+        this.r = 0; this.w = 0; this.frac = 0; this.ratio = 1; this.playing = false;
+        this.port.onmessage = (e) => {
+            if (e.data.ratio) { this.ratio = e.data.ratio; return; }
+            const s = e.data;
+            for (let i = 0; i < s.length; i++) { this.buf[this.w] = s[i] / 32768; this.w = (this.w + 1) & (this.size - 1); }
+            const queued = (this.w - this.r) & (this.size - 1);
+            if (queued > 4410) this.r = (this.w - 4410) & (this.size - 1);   // 最多留 0.2 秒
+        };
+    }
+    process(inputs, outputs) {
+        const out = outputs[0][0];
+        for (let i = 0; i < out.length; i++) {
+            const queued = (this.w - this.r) & (this.size - 1);
+            if (queued < 2) this.playing = false;
+            if (!this.playing && queued >= 1470) this.playing = true;   // 存到 1/15 秒再開始
+            if (!this.playing) { out[i] = 0; continue; }
+            const a = this.buf[this.r], b = this.buf[(this.r + 1) & (this.size - 1)];
+            out[i] = a + (b - a) * this.frac;
+            this.frac += this.ratio;
+            while (this.frac >= 1) { this.frac -= 1; this.r = (this.r + 1) & (this.size - 1); }
+        }
+        return true;
+    }
+}
+registerProcessor("comet-audio", CometAudio);
+`;
+
+// 回傳 { start(), push(取樣), setMuted(true/false) }。
+// 瀏覽器規定：使用者點過、按過鍵之後才能出聲，所以要在 pointerdown／keydown 的時候呼叫 start()
+export function createAudio() {
+    let ctx = null, node = null, starting = null, muted = false;
+    return {
+        start() {
+            if (ctx) { if (!muted) ctx.resume(); return; }
+            if (starting) return;
+            starting = (async () => {
+                const c = new AudioContext();
+                const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
+                await c.audioWorklet.addModule(url);
+                URL.revokeObjectURL(url);
+                node = new AudioWorkletNode(c, "comet-audio", { numberOfInputs: 0, outputChannelCount: [1] });
+                node.port.postMessage({ ratio: 22050 / c.sampleRate });
+                node.connect(c.destination);
+                ctx = c;
+                if (muted) c.suspend();
+            })().catch((e) => console.log("聲音沒辦法開始：" + e.message));
+        },
+        // samples：Int16Array。用「轉移」的方式傳過去（不複製），傳完這一份在這邊就不能用了
+        push(samples) { if (node && !muted) node.port.postMessage(samples, [samples.buffer]); },
+        setMuted(m) {
+            muted = m;
+            if (ctx) { if (m) ctx.suspend(); else ctx.resume(); }
+        },
+        get muted() { return muted; },
+    };
+}
+
 export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log, saveStore = browserSaveStore(), clock = browserClock } = {}) {
     let exports = null;
+    let audioOut = null;   // 聲音送到哪裡（setAudio）
 
     // wasm 需要從 JavaScript 拿到的函式（imports）。
     // js_log：C 的 platform_log 會呼叫它。
@@ -247,7 +317,16 @@ export async function createEngine({ wasmUrl = "comet.wasm", onLog = console.log
             exports.input_set_stick(player, 0, s.lx, s.ly);
             exports.input_set_stick(player, 1, s.rx, s.ry);
         },
-        frame() { exports.engine_frame(); },
+        frame() {
+            exports.engine_frame();
+            // 這一幀的聲音（core/audio.h）：複製一份交給喇叭（createAudio）
+            if (audioOut) {
+                const n = exports.audio_sample_count();
+                audioOut.push(new Int16Array(exports.memory.buffer, exports.audio_samples(), n).slice());
+            }
+        },
+        // 聲音送到哪裡：createAudio() 的結果；null = 不出聲（自動測試、沒有喇叭的地方）
+        setAudio(out) { audioOut = out; },
 
         // ---- 亂數種子與重播（格式見 core/replay.h）----
 

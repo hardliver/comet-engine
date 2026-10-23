@@ -43,5 +43,6 @@ fs.writeFileSync(out, code);
 const images = Object.keys(project.images || {}).length;
 const maps = Object.keys(project.maps || {}).length;
 const data = Object.keys(project.data || {}).length;
-console.log(`已產生 ${path.relative(process.cwd(), out)}（${segments.length} 個原始碼檔、${images} 張圖片、${maps} 張地圖、${data} 個資料檔，${(code.length / 1024).toFixed(0)} KB）`);
+const sfx = project.sfx ? `、音效檔 ${project.sfx}` : "";
+console.log(`已產生 ${path.relative(process.cwd(), out)}（${segments.length} 個原始碼檔、${images} 張圖片、${maps} 張地圖、${data} 個資料檔${sfx}，${(code.length / 1024).toFixed(0)} KB）`);
 if (font.stats) console.log(fontSummary(font.stats));

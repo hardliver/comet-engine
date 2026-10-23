@@ -93,6 +93,21 @@
   .me-obj-row { display: grid; grid-template-columns: 9em minmax(0, 1fr) auto; gap: 6px; align-items: center; color: var(--muted); }
   .me-obj-row textarea, .me-obj-row input, .me-obj-row select { width: 100%; box-sizing: border-box; }
   .me-status { padding: 6px 8px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); }
+  /* ---- 音效編輯器（sfxedit.js）---- */
+  #sfxedit { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+  #sfxedit[hidden] { display: none; }
+  .se-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  .se-bar input[type=number] { width: 52px; background: #1b1d22; color: var(--fg); border: 1px solid #30343c; border-radius: 4px; }
+  .se-bar select { background: #1b1d22; color: var(--fg); border: 1px solid #30343c; border-radius: 4px; }
+  .se-title { color: #fff; font-weight: 600; }
+  .se-grid { display: block; margin: 8px 10px; max-width: calc(100% - 20px); touch-action: none; cursor: crosshair; image-rendering: pixelated; }
+  .se-status { padding: 0 10px 6px; font-size: 12px; color: var(--muted); }
+  .se-status.bad { color: #ff5c6c; }
+  .se-pats { margin: 6px 10px 12px; border-collapse: collapse; font-size: 12px; }
+  .se-pats th { color: var(--muted); font-weight: 500; text-align: left; padding: 2px 6px; }
+  .se-pats td { padding: 2px 6px; border-bottom: 1px solid #262a31; }
+  .se-pats select { background: #1b1d22; color: var(--fg); border: 1px solid #30343c; border-radius: 4px; }
+
   /* ---- 資料表編輯器（dataedit.js）---- */
   #dataedit { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   #dataedit[hidden] { display: none; }
@@ -315,6 +330,7 @@
   <span class="speed" id="speed" title="加速遊戲（開發用）：每 1/60 秒跑 2 或 4 幀。在遊戲畫面上按住 ` 鍵暫時 ×4">
     <button data-speed="1" class="on">×1</button><button data-speed="2">×2</button><button data-speed="4">×4</button>
   </span>
+  <button id="btn-sound" title="聲音開關">🔊</button>
   <button id="btn-pause">暫停</button>
   <button id="btn-step" disabled>下一幀</button>
   <button id="btn-run" class="primary" title="Ctrl + Enter（Mac：⌘ + Enter）">▶ 重新執行</button>
@@ -336,6 +352,7 @@
     <div id="editor"></div>
     <div id="mapedit" hidden></div>
     <div id="dataedit" hidden></div>
+    <div id="sfxedit" hidden></div>
     <div id="syntax-msg" hidden title="點一下跳到那一行"></div>
     </div>
   </div>

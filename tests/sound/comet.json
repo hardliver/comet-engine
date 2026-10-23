@@ -1,0 +1,7 @@
+{
+  "name": "聲音測試",
+  "id": "comet/sound-test",
+  "sources": ["main.lua"],
+  "sfx": "sfx.json",
+  "output": "../../build/sound_test.lua"
+}

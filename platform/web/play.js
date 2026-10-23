@@ -1,7 +1,7 @@
 // play.js — 遊玩頁（index.html）
 // 引擎和輸入的細節在 comet.js、input.js；這裡只負責遊玩頁的畫面和按鈕。
 
-import { createEngine, startLoop } from "./comet.js";
+import { createEngine, startLoop, createAudio } from "./comet.js";
 import { setupKeyboard, setupTouch, readGamepad, connectedPads, merge } from "./input.js";
 import { setupTouchpad } from "./touchpad.js";
 import { setupPadMenu } from "./padmenu.js";
@@ -57,6 +57,20 @@ function getInput(player) {
 const engine = await createEngine({
     onLog: (msg) => { console.log(msg); showHint(msg, 8000); },
 });
+
+// ---- 聲音（core/audio.h）----
+// 瀏覽器規定使用者點過、按過鍵之後才能出聲：第一次點畫面或按鍵時才真的打開
+const audio = createAudio();
+engine.setAudio(audio);
+for (const ev of ["pointerdown", "keydown", "touchstart"]) window.addEventListener(ev, () => audio.start(), { capture: true });
+function toggleSound() {
+    audio.setMuted(!audio.muted);
+    for (const id of ["btn-sound", "btn-sound-touch"]) document.getElementById(id).textContent = audio.muted ? "🔇 靜音" : "🔊 聲音";
+    showHint(audio.muted ? "聲音關了（再按一次打開）" : "聲音開了");
+}
+document.getElementById("btn-sound").addEventListener("click", toggleSound);
+document.getElementById("btn-sound-touch").addEventListener("click", toggleSound);
+window.addEventListener("keydown", (e) => { if (e.key === "m" || e.key === "M") toggleSound(); });
 
 // ---- 開始一款遊戲（每次都錄影）----
 // 每次開局給一個新的亂數種子，遊戲才不會每次都遇到一樣的事；

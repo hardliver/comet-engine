@@ -38,6 +38,7 @@ core/                純 C 核心：不碰檔案、視窗、硬體
   input              按鍵狀態：平台寫入、遊戲讀取
   replay             重播檔：錄下每一幀的輸入，可完全重現同一場遊戲（格式見 replay.h）
   save               存檔：Lua 的值 ↔ bytes 的編碼，讀到的存檔也記進重播檔（見 save.h）
+  audio              音效與音樂：4 聲道合成（三角、方波、窄方波、鋸齒、雜訊），每幀算出 1/60 秒的聲音（見 audio.h）
   system             系統卡匣模式：Nova 主選單用的 sys API、啟動遊戲、回 HOME（見 system.h）
   sha256             SHA-256 指紋：辨認遊戲版本、比對畫面
   platform.h         核心需要平台提供的功能（印訊息、保管存檔）
@@ -96,6 +97,8 @@ function _draw()   end   -- 每幀一次：畫畫面
 | `stick(玩家, n)` | 搖桿 x, y（-127～127）；n = 0 左、1 右 |
 | `rnd(n)` | 0 到 n-1 的隨機整數（各平台結果相同） |
 | `frame()` | 目前第幾幀 |
+| `sfx(名字, 聲道)` | 播音效（sfx 檔，4 聲道合成）；`sfx(nil, 聲道)` 停掉 |
+| `music(名字)` | 播音樂（一段段音效串起來、可循環）；`music()` 停掉 |
 | `clock()` | 現實的本地時間 `{ year, month, day, hour, min, sec, wday, time }`；沒有時間來源回傳 `nil` |
 | `pal(色, r, g, b)` | 設定調色盤（0–255） |
 | `camera(x, y)` | 繪圖平移，用來捲動地圖 |
@@ -113,6 +116,7 @@ function _draw()   end   -- 每幀一次：畫畫面
 - 重播：遊玩頁從開局就一直錄，按「下載重播」得到 `.rep`（從頭到現在，錄影繼續）；把 `.rep` 拖進遊玩頁就用目前的遊戲播放，播完顯示最後的畫面是否一致，之後可接著玩。每次開局用新的亂數種子（記在重播檔裡）；Studio 與自動測試固定用種子 1
 - 系統卡匣：`engine_load_system()` 載入的卡匣多一個 `sys` 表格（`sys.games()`、`sys.launch(id)`、`sys.last_game()`），一般遊戲沒有。同一時間只有一個 Lua 環境：啟動遊戲時關掉系統卡匣，回 HOME（HOME 鍵，或按住 Start＋Select 0.5 秒）時重新載入。載入哪個檔案由平台決定（引擎只發出請求），網頁版的大廳在 nova-system
 - 存檔：`save(欄位, 值)`、`loadsave(欄位)`，8 個欄位、每個最多 16 KB。網頁版存在瀏覽器的 localStorage（依遊戲 id 分開，同一個網址的遊玩頁和 Studio 共用）；Mac 版用 `--saves`。播放重播時從重播檔讀、不寫入
+- 聲音：`sfx`、`music`，資料在 `comet.json` 的 `"sfx"` 檔（格式見 AI_GUIDE「音效與音樂」）。C 核心合成，22050 Hz、16 位元、4 聲道；每一幀剛好算出 1/60 秒（367 或 368 個取樣），所以 Mac 版和網頁版的聲音逐 byte 相同（`make check`）。網頁用 AudioWorklet 播（玩家點過畫面或按過鍵才出聲，遊玩頁 M 鍵或 🔊 開關）；Mac 版用 `--wav 檔.wav` 存下來聽。Studio 的音效編輯器：打開 sfx 檔，按住拖曳畫音符、右鍵休止，下面編音樂的段落，▶ 試聽
 - 現實時鐘：`clock()`。網頁用瀏覽器的時間（本地時區）；Mac 版用 `--clock now` 或 `--clock 2026-10-22T14:05`（從那一刻起每 60 幀走 1 秒，沒加就是沒有時間來源）；主機之後用 RTC 或 WiFi 對時。讀到的時間記進重播檔（重播檔第 2 版），重播時讀重播檔裡的時間
 - 網頁輸入：
   - 鍵盤：WASD = 左搖桿、方向鍵 = 右搖桿、K/L/J/I = A/B/X/Y（空白鍵也是 A）、Q/E = L/R、Enter = Start、Tab = Select

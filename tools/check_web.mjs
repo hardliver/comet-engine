@@ -30,6 +30,8 @@
 // 測試 17：現實時鐘（tests/clock）。和 Mac 版 --clock 2026-12-31T23:59:59 同樣的時間：檢查方塊全綠、
 //          畫面和 build/clock1.ppm 相同、錄的重播檔和 Mac 版逐 byte 相同；
 //          沒有時間來源時播放 Mac 的重播檔，讀到的是重播檔裡的時間；沒有時間來源時 clock() 是 nil
+// 測試 18：聲音（tests/sound）。同樣跑 480 幀，網頁版每一幀的聲音取樣接起來，和 Mac 版的 build/sound.wav 逐 byte 相同；
+//          檢查方塊全綠、畫面和 build/sound.ppm 相同
 
 import fs from "fs";
 import crypto from "crypto";
@@ -701,6 +703,42 @@ function fail(name, detail)  { console.log(`✗ ${name}\n  ${detail}`); failures
             run(engine);
             if (Buffer.compare(framebufferRGB(engine), macPPM("build/clock3.ppm")) !== 0) problems.push("沒有時間來源的畫面和 Mac 版不同");
         }
+    } catch (e) {
+        problems.push(String(e));
+    }
+    if (problems.length === 0) ok(name);
+    else fail(name, problems.join("；"));
+}
+
+// ---- 測試 18 ----
+{
+    const name = "聲音：網頁版和 Mac 版合成出來的聲音逐 byte 相同";
+    const problems = [];
+    try {
+        const engine = await loadEngine();
+        load(engine, fs.readFileSync("build/sound_test.lua", "utf8"));
+        const chunks = [];
+        for (let i = 0; i < 480; i++) {
+            engine.input_set(0, 0);
+            engine.engine_frame();
+            const n = engine.audio_sample_count();
+            // Int16Array 直接看 wasm 記憶體那一塊（位置要是 2 的倍數，int16_t 陣列本來就是）；slice() 複製出來
+            chunks.push(new Int16Array(engine.memory.buffer, engine.audio_samples(), n).slice());
+        }
+        const total = chunks.reduce((a, c) => a + c.length, 0);
+        const web = new Int16Array(total);
+        let k = 0;
+        for (const c of chunks) { web.set(c, k); k += c.length; }
+        const wav = fs.readFileSync("build/sound.wav");
+        const mac = new Int16Array(wav.buffer.slice(wav.byteOffset + 44, wav.byteOffset + wav.length));
+        if (mac.length !== web.length) problems.push(`取樣數不同：Mac ${mac.length}、網頁 ${web.length}`);
+        else {
+            for (let i = 0; i < mac.length; i++) {
+                if (mac[i] !== web[i]) { problems.push(`第 ${i} 個取樣不同：Mac ${mac[i]}、網頁 ${web[i]}`); break; }
+            }
+        }
+        const macPPM = (() => { const p = fs.readFileSync("build/sound.ppm"); return p.subarray(p.length - W * H * 3); })();
+        if (Buffer.compare(framebufferRGB(engine), macPPM) !== 0) problems.push("畫面和 Mac 版不同（檢查方塊）");
     } catch (e) {
         problems.push(String(e));
     }

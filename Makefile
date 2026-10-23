@@ -3,7 +3,7 @@
 #   make web     編譯網頁版到 build/web/
 #   make serve   在 http://localhost:8420 開啟網頁版（編輯器：/studio.html）
 #                （換埠號：make serve PORT=9000）
-#   make check   自動測試：網頁版與 Mac 版結果一致（含中文字、地圖、重播檔、存檔、現實時鐘、系統卡匣、資源包）、Lua 錯誤處理正常
+#   make check   自動測試：網頁版與 Mac 版結果一致（含中文字、地圖、重播檔、存檔、現實時鐘、聲音、系統卡匣、資源包）、Lua 錯誤處理正常
 #   make clean   清除編譯結果
 #
 # -Wall -Wextra：開啟警告，讓編譯器幫你抓可疑的寫法
@@ -11,7 +11,7 @@
 CFLAGS = -Wall -Wextra -std=c99 -O2
 
 # 核心
-CORE = core/gfx.c core/map.c core/input.c core/engine.c core/script.c core/sha256.c core/replay.c core/save.c core/clock.c core/system.c core/pak.c
+CORE = core/gfx.c core/map.c core/input.c core/engine.c core/script.c core/sha256.c core/replay.c core/save.c core/clock.c core/audio.c core/system.c core/pak.c
 HEADERS = $(wildcard core/*.h)
 
 # Lua 5.4（third_party/lua，原始碼未修改）
@@ -23,7 +23,7 @@ SHARED = $(CORE) $(LUA_SRC)
 
 # 網頁版要讓 JavaScript 呼叫的 C 函式（名稱前面要加底線）
 # malloc、free：JavaScript 要把 Lua 原始碼放進 wasm 的記憶體
-WEB_EXPORTS = _engine_init,_engine_load,_engine_check,_engine_check_error,_engine_eval,_engine_eval_result,_engine_profile,_engine_prof_instr,_engine_prof_pixels,_engine_prof_calls,_engine_prof_load,_engine_frame,_engine_frame_count,_input_set,_input_set_stick,_gfx_framebuffer,_gfx_palette,_engine_set_seed,_engine_seed,_engine_cart_sha,_replay_record_begin,_replay_snapshot,_replay_snapshot_size,_replay_play_begin,_replay_stop,_replay_state,_replay_frames,_replay_matched,_engine_load_system,_system_clear_games,_system_add_game,_system_set_info,_system_request,_system_request_game,_system_request_done,_pak_set,_malloc,_free
+WEB_EXPORTS = _engine_init,_engine_load,_engine_check,_engine_check_error,_engine_eval,_engine_eval_result,_engine_profile,_engine_prof_instr,_engine_prof_pixels,_engine_prof_calls,_engine_prof_load,_engine_frame,_engine_frame_count,_input_set,_input_set_stick,_gfx_framebuffer,_gfx_palette,_engine_set_seed,_engine_seed,_engine_cart_sha,_replay_record_begin,_replay_snapshot,_replay_snapshot_size,_replay_play_begin,_replay_stop,_replay_state,_replay_frames,_replay_matched,_engine_load_system,_system_clear_games,_system_add_game,_system_set_info,_system_request,_system_request_game,_system_request_done,_pak_set,_audio_samples,_audio_sample_count,_malloc,_free
 
 # 網頁伺服器的埠號；?= 代表指令列沒有指定時才用這個值
 PORT ?= 8420
@@ -72,11 +72,15 @@ build/data_test.lua: tests/data/comet.json tests/data/main.lua tests/data/specie
 build/map_test.lua: tests/map/comet.json tests/map/main.lua tests/map/maps/test.json tests/map/town.png tests/map/dungeon.png platform/web/cart.js
 	node tools/cart.mjs tests/map
 
+# 聲音測試用的遊戲檔（有 sfx 檔）
+build/sound_test.lua: tests/sound/comet.json tests/sound/main.lua tests/sound/sfx.json platform/web/cart.js
+	node tools/cart.mjs tests/sound
+
 # 資源包測試用的 .pak
 build/pak_test.pak: tests/pak/make_pak.mjs tools/pak.mjs
 	node tests/pak/make_pak.mjs
 
-check: build/mac web build/text_test.lua build/map_test.lua build/data_test.lua build/pak_test.pak tests/save/main.lua tests/clock/main.lua tests/pak/main.lua $(wildcard tests/system/*.lua)
+check: build/mac web build/text_test.lua build/map_test.lua build/data_test.lua build/sound_test.lua build/pak_test.pak tests/save/main.lua tests/clock/main.lua tests/pak/main.lua $(wildcard tests/system/*.lua)
 	./build/mac
 	./build/mac games/move_box.lua build/record.ppm --record build/move_box.rep
 	./build/mac games/move_box.lua build/replay.ppm --replay build/move_box.rep
@@ -90,6 +94,8 @@ check: build/mac web build/text_test.lua build/map_test.lua build/data_test.lua 
 	./build/mac tests/clock/main.lua build/clock1.ppm --clock 2026-12-31T23:59:59 --record build/clock.rep
 	./build/mac tests/clock/main.lua build/clock2.ppm --replay build/clock.rep
 	./build/mac tests/clock/main.lua build/clock3.ppm
+	./build/mac build/sound_test.lua build/sound.ppm --input tests/sound/input.txt --wav build/sound.wav
+	node tests/sound/check.mjs
 	./build/mac tests/system/system.lua build/system.ppm --system \
 		--game test/a tests/system/game_a.lua --game test/b tests/system/game_b.lua
 	./build/mac tests/pak/main.lua build/pak_test.ppm --pak build/pak_test.pak --record build/pak.rep

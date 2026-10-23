@@ -2,6 +2,7 @@
 
 #include <string.h>
 #include "engine.h"
+#include "audio.h"
 #include "clock.h"
 #include "gfx.h"
 #include "map.h"
@@ -57,6 +58,7 @@ static int load(const char *src, size_t len, int is_system)
     memcpy(cart_sha, sha, 32);
     save_on_load(src, len);   // 遊戲的 id：存檔放在哪裡
     clock_on_load();          // 忘掉上一款遊戲讀到的時間
+    audio_reset();            // 上一款遊戲的聲音停掉
     system_on_load(is_system);
 
     frame_count = 0;
@@ -134,6 +136,7 @@ void engine_frame(void)
         script_call("_update");   // 先更新狀態
         script_call("_draw");     // 再畫出來
     }
+    audio_frame(frame_count);     // 這一幀的聲音（遊戲剛剛叫的 sfx、music 從這一幀開始響）
     frame_count++;
     last_instr = script_instr;
     last_pixels = gfx_pixels_drawn;
