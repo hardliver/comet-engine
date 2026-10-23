@@ -20,7 +20,9 @@
 #ifndef SYSTEM_H
 #define SYSTEM_H
 
-#define SYSTEM_MAX_GAMES 64
+#ifndef SYSTEM_MAX_GAMES
+#define SYSTEM_MAX_GAMES 64   // 平台可以用編譯參數改小（主機 RAM 少）
+#endif
 #define SYSTEM_ID_MAX    63
 #define SYSTEM_NAME_MAX  63
 #define SYSTEM_DESC_MAX  95      // 一句話介紹（UTF-8，中文約 30 字）

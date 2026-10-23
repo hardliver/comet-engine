@@ -591,6 +591,11 @@ int script_load(const char *src, size_t len, const char *name, int is_system)
         return 1;
     }
     open_libs(L, is_system);
+#ifdef COMET_GC_PAUSE
+    // 平台可以調整「記憶體長到存活量的幾 % 才回收垃圾」（Lua 預設 200%）。
+    // 主機 RAM 很少，設低一點（例如 120），代價是多花一點時間回收
+    lua_gc(L, LUA_GCINC, COMET_GC_PAUSE, 0, 0);
+#endif
     script_profile(profiling);   // 新的 Lua 環境：hook 要重新裝
 
     // 編譯原始碼。"t" 代表只接受文字，不接受預先編譯好的二進位檔（比較安全）。

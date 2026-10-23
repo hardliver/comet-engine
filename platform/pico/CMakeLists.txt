@@ -43,7 +43,7 @@ file(GLOB LUA_SRC ${COMET}/third_party/lua/*.c)
 list(FILTER LUA_SRC EXCLUDE REGEX "/(lua|luac|liolib|loslib|loadlib|linit)\\.c$")
 
 add_executable(nova
-    main.c video.c usb_pad.c sd.c xinput_host.c
+    main.c video.c usb_pad.c sd.c romflash.c xinput_host.c
     ${CORE_SRC} ${LUA_SRC}
     ${CMAKE_CURRENT_BINARY_DIR}/cart_data.c)
 
@@ -54,13 +54,16 @@ target_include_directories(nova PRIVATE
 
 target_compile_definitions(nova PRIVATE
     LUA_USER_H="comet_lua_user.h"
-    PICO_USE_MALLOC_MUTEX=1)             # 兩個核心都可能 malloc
+    PICO_USE_MALLOC_MUTEX=1              # 兩個核心都可能 malloc
+    COMET_GC_PAUSE=120                   # RAM 少：記憶體長到 1.2 倍就回收垃圾（Lua 預設 2 倍）
+    COMET_EVAL_MAX=256                   # 主機沒有 Studio 除錯，結果緩衝不用 16 KB
+    SYSTEM_MAX_GAMES=16)                 # 主選單之後做；先不用放 64 款遊戲的清單
 
 target_compile_options(nova PRIVATE -Wall -Wextra)
 
 target_link_libraries(nova
     pico_stdlib pico_multicore
-    hardware_dma hardware_pll hardware_clocks
+    hardware_dma hardware_pll hardware_clocks hardware_flash pico_flash
     tinyusb_host tinyusb_board tinyusb_pico_pio_usb
     no-OS-FatFS-SD-SDIO-SPI-RPi-Pico)
 

@@ -25,6 +25,9 @@
 #include "video.h"
 #include "usb_pad.h"
 #include "sd.h"
+#include "romflash.h"
+#include "../../core/luarom.h"
+#include "lauxlib.h"
 #include "tusb.h"
 #include "xinput_host.h"   // XINPUT_GAMEPAD_* 按鍵位元（要先 include tusb.h）
 
@@ -192,6 +195,73 @@ static unsigned heap_total(void) { return (unsigned)(&__StackLimit - &__bss_end_
 static unsigned heap_used(void)  { return (unsigned)mallinfo().uordblks; }
 
 // ============================================================================
+// 預先編譯的卡匣（.nvc）：程式放 Flash（core/luarom.h、romflash.h）
+// ============================================================================
+// .nvc 的格式（Mac 版 --compile 產生）：「NOVACART」+ 開頭原始碼長度（4 bytes）+ 開頭原始碼 + Lua 位元組碼
+
+static const void *rom_root;
+
+static int rom_loader(lua_State *L, void *ud)
+{
+    (void)ud;
+    luarom_push_main(L, rom_root);
+    return LUA_OK;
+}
+
+// 成功回傳 0（*err 是 engine_load 的結果）；找不到或格式不對回傳 1（改用別的卡匣）
+static int load_nvc(const char *path, char *info, size_t info_size, int *err)
+{
+    if (sd_stream_open(path) != 0) return 1;
+    char magic[8];
+    uint32_t head_len;
+    if (sd_stream_read(NULL, magic, 8) || memcmp(magic, "NOVACART", 8) != 0 ||
+        sd_stream_read(NULL, &head_len, 4) || head_len > 4096) {
+        sd_stream_close();
+        snprintf(info, info_size, "GAME.NVC: BAD FILE");
+        return 1;
+    }
+    char *head = malloc(head_len + 1);
+    if (head == NULL || sd_stream_read(NULL, head, head_len)) {
+        free(head);
+        sd_stream_close();
+        return 1;
+    }
+
+    // 建唯讀區：和 Flash 上一樣的部分不寫（同一款遊戲第二次開就很快）。
+    // 第一次裝一款大遊戲要寫 1–2 MB，大約 30 秒，這段時間畫面會閃或沒有訊號
+    uint32_t t0 = time_us_32();
+    RomWriter w;
+    romflash_writer(&w);
+    lua_State *T = luaL_newstate();   // 只借它的字串雜湊種子
+    char e[96];
+    int r = luarom_build(T, sd_stream_read, NULL, &w, &rom_root, e, sizeof e);
+    lua_close(T);
+    sd_stream_close();
+    if (r != 0) {
+        platform_log(e);
+        free(head);
+        snprintf(info, info_size, "GAME.NVC: BUILD FAILED");
+        return 1;
+    }
+    romflash_finish_build(w.used);
+    unsigned code_kb = (unsigned)(w.used / 1024);
+
+    // 告訴引擎：程式在唯讀區；圖片、字型、地圖、凍結的表格也接著放在那裡
+    luarom_activate(romflash_base(), ROMFLASH_SIZE);
+    gfx_set_rom_store(romflash_store);
+    luarom_set_append(romflash_append);
+    script_set_loader(rom_loader, NULL);
+    *err = engine_load(head, head_len);   // 開頭原始碼：引擎只用來讀遊戲 id
+    free(head);
+
+    snprintf(info, info_size, "CART GAME.NVC ROM %uK+%uK WR %u ER %u %uS",
+             code_kb, (unsigned)((romflash_used() - w.used) / 1024),
+             romflash_pages_written(), romflash_sectors_erased(),
+             (unsigned)((time_us_32() - t0) / 1000000));
+    return 0;
+}
+
+// ============================================================================
 // 主程式
 // ============================================================================
 
@@ -234,14 +304,18 @@ static void nova_main(void)
     engine_init();
     engine_set_seed(time_us_32());   // 每次開機不同的亂數種子（同一場遊戲內仍然是同步的）
 
-    // 卡匣：先找 SD 卡上的 game.lua，沒有就用內建的
-    char cart_info[48];
+    // 卡匣，依序找：
+    //   SD 卡的 game.nvc（預先編譯好的，程式放 Flash：大遊戲用這個）
+    //   SD 卡的 game.lua（原始碼，整個放 RAM：小遊戲）
+    //   韌體內建的卡匣
+    char cart_info[64];
     int err;
     char *sd_src = NULL;
     size_t sd_len = 0;
-    char sd_probe_info[48];
-    sd_probe(sd_probe_info, sizeof sd_probe_info);
-    if (sd_mount() == 0 && sd_read_file("game.lua", &sd_src, &sd_len) == 0) {
+    int sd_ok = sd_mount() == 0;
+    if (sd_ok && load_nvc("game.nvc", cart_info, sizeof cart_info, &err) == 0) {
+        // 已經載入
+    } else if (sd_ok && sd_read_file("game.lua", &sd_src, &sd_len) == 0) {
         err = engine_load(sd_src, sd_len);
         free(sd_src);   // 引擎已經把需要的東西複製走了（編譯好的程式、遊戲 id），原始碼可以丟掉
         snprintf(cart_info, sizeof cart_info, "CART SD GAME.LUA %uK", (unsigned)(sd_len / 1024));
@@ -274,9 +348,10 @@ static void nova_main(void)
                 overlay_text(4, 14 + i * 7, log_buf[(log_next + i) % LOG_LINES]);
         }
         if (show_stats) {
-            char s[64];
-            snprintf(s, sizeof s, "HEAP %uK/%uK LOAD %uK FRAME %u.%uMS",
-                     heap_used() / 1024, heap_total() / 1024, heap_after_load / 1024,
+            char s[96];
+            snprintf(s, sizeof s, "HEAP %uK/%uK LUA %uK LOAD %uK FRAME %u.%uMS",
+                     heap_used() / 1024, heap_total() / 1024, (unsigned)(script_mem() / 1024),
+                     heap_after_load / 1024,
                      (unsigned)(frame_us / 1000), (unsigned)(frame_us % 1000 / 100));
             overlay_text(4, SCREEN_H - 8, s);
             PadState p;
@@ -285,7 +360,6 @@ static void nova_main(void)
                      p.buttons, p.lx / 258, p.ly / 258);
             overlay_text(4, SCREEN_H - 15, s);
             overlay_text(4, SCREEN_H - 22, cart_info);
-            overlay_text(4, SCREEN_H - 29, sd_probe_info);
         }
 
         // 3. 讀手把，跑一幀遊戲（_update、_draw）。超過 16.6 ms 的話會晚一個空白期，遊戲變慢但不出錯

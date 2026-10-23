@@ -14,6 +14,11 @@ int sd_mount(void);
 // 失敗回傳非 0（找不到檔案、記憶體不夠…），*data 為 NULL
 int sd_read_file(const char *path, char **data, size_t *len);
 
+// 一段一段讀一個檔案（大檔案放不進 RAM 時用）。同一時間只能開一個
+int sd_stream_open(const char *path);   // 成功回傳 0
+int sd_stream_read(void *ud, void *dst, size_t n);   // 讀 n bytes，成功回傳 0（簽名配合 luarom 的 RomReader）
+void sd_stream_close(void);
+
 // 最後一次錯誤的說明（給畫面顯示）
 const char *sd_error(void);
 

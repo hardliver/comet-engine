@@ -91,7 +91,11 @@ const char *engine_check_error(void)
     return check_error;
 }
 
-static char eval_result[16384];
+// Studio 除錯用的結果文字。主機沒有 Studio，可以用 COMET_EVAL_MAX 改小省 RAM
+#ifndef COMET_EVAL_MAX
+#define COMET_EVAL_MAX 16384
+#endif
+static char eval_result[COMET_EVAL_MAX];
 
 int engine_eval(const char *src, size_t len, int mode)
 {

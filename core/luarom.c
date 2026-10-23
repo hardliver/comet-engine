@@ -58,6 +58,7 @@ typedef struct {
     char *err;
     size_t err_size;
     void *tmp;   // 出錯時要釋放的暫存記憶體（同時只會有一塊大的）
+    int last_nup;   // 最後寫出的函式有幾個上值（不能讀回唯讀區檢查：主機上可能還在緩衝區，沒寫進 Flash）
 } Builder;
 
 // 出錯：記下原因，跳回 luarom_build 的 setjmp。
@@ -292,7 +293,10 @@ static Proto *load_function_inner(Builder *b, TString *psource, Pending *pd)
                     ts = load_string(b);
                     b->tmp = k;
                     if (ts == NULL) fail(b, "常數字串格式錯誤");
-                    setsvalue(b->L, o, ts);
+                    // 不能用 setsvalue：它會讀 ts->tt 決定型別，但 ts 剛寫進唯讀區，
+                    // 主機上可能還在緩衝區、沒寫進 Flash，讀到的是 0xFF。型別檔案裡就有（t）
+                    val_(o).gc = obj2gco(ts);
+                    settt_(o, ctb(t));
                     break;
                 }
                 default: fail(b, "未知的常數種類");
@@ -353,6 +357,7 @@ static Proto *load_function_inner(Builder *b, TString *psource, Pending *pd)
     f.upvalues = emit(b, pd->upvalues, (size_t)f.sizeupvalues * sizeof(Upvaldesc), ALIGNOF(Upvaldesc));
 
     // 最後才是函式本身
+    b->last_nup = f.sizeupvalues;
     f.next = NULL;
     f.tt = LUA_VPROTO;
     f.marked = 0;     // 灰色：GC 不會碰它
@@ -424,7 +429,7 @@ int luarom_build(lua_State *L, RomReader read, void *read_ud, RomWriter *w,
         check_header(b);
         int nup = rd_byte(b);
         Proto *main = load_function(b, NULL);
-        if (main == NULL || nup != main->sizeupvalues) fail(b, "主函式格式錯誤");
+        if (main == NULL || nup != b->last_nup) fail(b, "主函式格式錯誤");
         *root = main;
         err[0] = '\0';
         result = 0;
@@ -648,13 +653,23 @@ static Table *fz_table(Freezer *f, Table *t)
         f->err = "freeze: 記憶體不夠";
         return t;
     }
+    // 結構裡有對齊用的空隙（TValue 16 bytes 只用到 9 bytes），直接整塊複製會把記憶體裡的雜訊
+    // 一起抄過去，每次開機都不一樣，主機就會以為內容變了而重寫 Flash。所以先清成 0，只填有意義的欄位
+    memset(arr, 0, asize * sizeof(TValue));
+    memset(nodes, 0, nsize * sizeof(Node));
     for (unsigned int i = 0; i < asize; i++) {
-        arr[i] = t->array[i];
+        arr[i].value_ = t->array[i].value_;
+        arr[i].tt_ = t->array[i].tt_;
         fz_value(f, &arr[i]);
     }
     for (unsigned int i = 0; i < nsize; i++) {
         Node *n = &nodes[i];
-        *n = t->node[i];
+        const Node *o = &t->node[i];
+        n->u.value_ = o->u.value_;
+        n->u.tt_ = o->u.tt_;
+        n->u.key_tt = o->u.key_tt;
+        n->u.next = o->u.next;
+        n->u.key_val = o->u.key_val;
         fz_value(f, gval(n));
         if (keyisdead(n)) {
             n->u.key_val.gc = NULL;   // 已經刪掉的 key：指向的物件可能被回收，清掉

@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "hw_config.h"
 #include "f_util.h"
 #include "ff.h"
@@ -60,6 +61,46 @@ int sd_mount(void)
     }
     snprintf(err_msg, sizeof err_msg, "SD: %s", FRESULT_str(fr));
     return 1;
+}
+
+// ---- 一段一段讀 ----
+// luarom 讀位元組碼時常常一次只要 1 byte；每次都呼叫 FatFs 太慢，所以自己多一層 512 bytes 的緩衝
+
+static FIL stream;
+static uint8_t sbuf[512];
+static UINT sbuf_len, sbuf_pos;
+
+int sd_stream_open(const char *path)
+{
+    FRESULT fr = f_open(&stream, path, FA_READ);
+    if (fr != FR_OK) {
+        snprintf(err_msg, sizeof err_msg, "SD %s: %s", path, FRESULT_str(fr));
+        return 1;
+    }
+    sbuf_len = sbuf_pos = 0;
+    return 0;
+}
+
+int sd_stream_read(void *ud, void *dst, size_t n)
+{
+    (void)ud;
+    uint8_t *d = dst;
+    while (n > 0) {
+        if (sbuf_pos == sbuf_len) {
+            if (f_read(&stream, sbuf, sizeof sbuf, &sbuf_len) != FR_OK || sbuf_len == 0) return 1;
+            sbuf_pos = 0;
+        }
+        UINT k = sbuf_len - sbuf_pos;
+        if (k > n) k = (UINT)n;
+        memcpy(d, sbuf + sbuf_pos, k);
+        sbuf_pos += k; d += k; n -= k;
+    }
+    return 0;
+}
+
+void sd_stream_close(void)
+{
+    f_close(&stream);
 }
 
 // ---- 診斷：自己送 CMD0 ----
