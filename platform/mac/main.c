@@ -11,6 +11,9 @@
 //     （一行一段：「幀數 按鍵…」，按鍵名稱 L R U D A B START SELECT X Y LB RB，# 後面是註解）
 //   加上 --shots 幀,幀,…：在這幾幀結束時另外存圖（輸出圖檔名加上 _幀數）
 //   加上 --pak 檔.pak：遊戲的資源包（背景、角色動畫，見 core/pak.h）
+//   加上 --compile 檔.nvc：不執行，把遊戲編譯成主機用的卡匣（.nvc：開頭幾行原始碼 + Lua 位元組碼，見 core/luarom.h）
+//   加上 --rom 檔.nvc：用主機的方式執行：程式放進一塊「唯讀」記憶體（模擬 Flash），
+//     Lua 只要寫到它就會當掉，用來證明程式真的可以放在 Flash。遊戲檔參數仍要給（引擎讀 id）
 //   加上 --saves 資料夾：存檔寫在那個資料夾（檔名「id.欄位.sav」，id 的 / 換成 _）。
 //   沒加就只存在記憶體裡，程式結束就沒了（測試時不會留下檔案）
 //   加上 --clock 時間：遊戲的 clock() 讀到的現實時間。「now」= 這台電腦現在的時間，
@@ -26,6 +29,10 @@
 // --replay 的結束代碼：0 = 一致，3 = 畫面不同，1 = 其他錯誤。
 // 之後的成就驗證（GitHub Actions）就是跑這個模式。
 
+// mmap 的 MAP_ANON 不在 C99 標準裡；這兩行讓 Linux（glibc）和 Mac 都提供它。
+// 一定要放在所有 #include 之前才有效
+#define _DEFAULT_SOURCE
+#define _DARWIN_C_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,6 +47,10 @@
 #include "../../core/replay.h"
 #include "../../core/save.h"
 #include "../../core/system.h"
+#include "../../core/script.h"
+#include "../../core/luarom.h"
+#include "lauxlib.h"
+#include <sys/mman.h>
 
 // 核心要求平台提供的功能：印出一行訊息
 void platform_log(const char *msg)
@@ -418,11 +429,115 @@ static int run_system(const char *sys_path, const char *out,
     return 0;
 }
 
+// ============================================================
+// 主機卡匣（.nvc）：「NOVACART」+ 開頭原始碼的長度（4 bytes）+ 開頭原始碼 + Lua 位元組碼
+// 開頭原始碼只是給引擎讀遊戲 id（-- id: 那一行），程式本身在位元組碼裡
+// ============================================================
+
+#define NVC_MAGIC "NOVACART"
+#define NVC_HEAD_LINES 10
+
+static int write_out(void *ud, const void *p, size_t n)
+{
+    return fwrite(p, 1, n, (FILE *)ud) == n ? 0 : 1;
+}
+
+static int compile_nvc(const char *src, size_t len, const char *out_path)
+{
+    FILE *f = fopen(out_path, "wb");
+    if (f == NULL) { printf("寫不出 %s\n", out_path); return 1; }
+    // 開頭幾行
+    size_t head = 0;
+    for (int line = 0; line < NVC_HEAD_LINES && head < len; ) {
+        if (src[head++] == '\n') line++;
+    }
+    uint32_t h32 = (uint32_t)head;
+    fwrite(NVC_MAGIC, 1, 8, f);
+    fwrite(&h32, 4, 1, f);
+    fwrite(src, 1, head, f);
+    // 位元組碼
+    lua_State *L = luaL_newstate();
+    char err[512];
+    int r = luarom_compile(L, src, len, "=game", write_out, f, err, sizeof err);
+    lua_close(L);
+    fclose(f);
+    if (r) { printf("編譯失敗：%s\n", err); return 1; }
+    printf("已產生 %s\n", out_path);
+    return 0;
+}
+
+// --rom：模擬 Flash 的唯讀區
+static char *rom_base;
+static size_t rom_cap = 8 * 1024 * 1024;
+static const void *rom_root;
+
+static int rom_write(void *ud, size_t off, const void *data, size_t n)
+{
+    (void)ud;
+    memcpy(rom_base + off, data, n);
+    return 0;
+}
+
+static void rom_read(void *ud, size_t off, void *dst, size_t n)
+{
+    (void)ud;
+    memcpy(dst, rom_base + off, n);
+}
+
+typedef struct { const char *p; size_t left; } MemReader;
+
+static int mem_read(void *ud, void *buf, size_t n)
+{
+    MemReader *m = ud;
+    if (n > m->left) return 1;
+    memcpy(buf, m->p, n);
+    m->p += n;
+    m->left -= n;
+    return 0;
+}
+
+static int rom_loader(lua_State *L, void *ud)
+{
+    (void)ud;
+    luarom_push_main(L, rom_root);
+    return LUA_OK;
+}
+
+// 讀 .nvc，把程式建進唯讀區，設好 script_load 的 loader。
+// *head、*head_len：開頭原始碼（交給 engine_load 讀 id）
+static int setup_rom(const char *nvc, size_t nlen, const char **head, size_t *head_len)
+{
+    if (nlen < 12 || memcmp(nvc, NVC_MAGIC, 8) != 0) { printf("不是 .nvc 檔\n"); return 1; }
+    uint32_t h32;
+    memcpy(&h32, nvc + 8, 4);
+    if (12 + (size_t)h32 > nlen) { printf(".nvc 檔損壞\n"); return 1; }
+    *head = nvc + 12;
+    *head_len = h32;
+
+    // mmap：向作業系統要一整塊記憶體，之後可以用 mprotect 改成唯讀
+    rom_base = mmap(NULL, rom_cap, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (rom_base == MAP_FAILED) { printf("mmap 失敗\n"); return 1; }
+    RomWriter w = { rom_base, rom_cap, 0, rom_write, rom_read, NULL };
+    MemReader m = { nvc + 12 + h32, nlen - 12 - h32 };
+    lua_State *T = luaL_newstate();   // 只是借它的設定（字串雜湊種子）
+    char err[256];
+    int r = luarom_build(T, mem_read, &m, &w, &rom_root, err, sizeof err);
+    lua_close(T);
+    if (r) { printf("%s\n", err); return 1; }
+    // 改成唯讀：之後 Lua 只要寫進這塊記憶體，程式就會立刻當掉（Segmentation fault）
+    mprotect(rom_base, rom_cap, PROT_READ);
+    luarom_activate(rom_base, w.used);
+    script_set_loader(rom_loader, NULL);
+    printf("唯讀區：%zu KB\n", w.used / 1024);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     // 先挑出 --record／--replay，剩下的依序是遊戲檔、輸出圖檔
     const char *record_path = NULL, *replay_path = NULL, *pak_path = NULL;
     const char *input_path = NULL, *shots = NULL;
+    const char *compile_path = NULL, *rom_path = NULL;
     int profile = 0;
     int system_mode = 0;
     const char *game_ids[MAX_GAME_ARGS], *game_paths[MAX_GAME_ARGS];
@@ -438,6 +553,10 @@ int main(int argc, char **argv)
             input_path = argv[++i];
         } else if (strcmp(argv[i], "--shots") == 0 && i + 1 < argc) {
             shots = argv[++i];
+        } else if (strcmp(argv[i], "--compile") == 0 && i + 1 < argc) {
+            compile_path = argv[++i];
+        } else if (strcmp(argv[i], "--rom") == 0 && i + 1 < argc) {
+            rom_path = argv[++i];
         } else if (strcmp(argv[i], "--pak") == 0 && i + 1 < argc) {
             pak_path = argv[++i];
         } else if (strcmp(argv[i], "--saves") == 0 && i + 1 < argc) {
@@ -473,6 +592,28 @@ int main(int argc, char **argv)
     if (src == NULL) {
         printf("讀不到遊戲檔 %s\n", path);
         return 1;
+    }
+
+    if (compile_path != NULL) {
+        int r = compile_nvc(src, len, compile_path);
+        free(src);
+        return r;
+    }
+
+    // --rom：遊戲改從 .nvc 的唯讀區執行；交給引擎的原始碼換成 .nvc 開頭那幾行
+    char *nvc = NULL;
+    if (rom_path != NULL) {
+        size_t nlen = 0;
+        nvc = read_file(rom_path, &nlen);
+        if (nvc == NULL) { printf("讀不到 %s\n", rom_path); return 1; }
+        const char *head;
+        size_t head_len;
+        if (setup_rom(nvc, nlen, &head, &head_len)) return 1;
+        free(src);
+        src = malloc(head_len + 1);
+        memcpy(src, head, head_len);
+        len = head_len;
+        free(nvc);
     }
 
     engine_init();
@@ -544,6 +685,7 @@ int main(int argc, char **argv)
     enum { TOP = 5 };
     uint32_t top_load[TOP] = { 0 }, top_frame[TOP] = { 0 }, top_instr[TOP] = { 0 }, top_pix[TOP] = { 0 }, top_calls[TOP] = { 0 };
     uint64_t sum_load = 0;
+    size_t mem_peak = 0;
     for (int i = 0; i < frames; i++) {
         if (input_path != NULL) {
             input_set(0, script_keys(i));
@@ -555,6 +697,8 @@ int main(int argc, char **argv)
         engine_frame();
         wav_collect();
         if (profile) {
+            size_t mem = script_mem();
+            if (mem > mem_peak) mem_peak = mem;
             uint32_t ld = engine_prof_load();
             sum_load += ld;
             // 插進「最重的 5 幀」（由大到小）
@@ -588,6 +732,8 @@ int main(int argc, char **argv)
         }
     }
     if (profile && frames > 0) {
+        // 記憶體：這台電腦是 64 位元，指標是 8 bytes；Pico 是 32 位元，實際會少一些（約 6–7 成）
+        printf("Lua 記憶體（64 位元）：最高 %zu KB，結束時 %zu KB\n", mem_peak / 1024, script_mem() / 1024);
         printf("運算預算（Level 1 預估，100%% = Pico 一幀的時間剛好用完）：平均 %llu.%llu%%\n",
                (unsigned long long)(sum_load / frames / 10), (unsigned long long)(sum_load / frames % 10));
         for (int k = 0; k < TOP && top_load[k] > 0; k++) {

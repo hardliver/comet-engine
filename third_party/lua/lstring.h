@@ -38,7 +38,20 @@
 /*
 ** equality for short strings, which are always internalized
 */
+#if !defined(LUA_ROM)
 #define eqshrstr(a,b)	check_exp((a)->tt == LUA_VSHRSTR, (a) == (b))
+#else
+/* Comet/Nova (LUA_ROM): strings may also live in read-only memory (ROM),
+** outside the string table, so a ROM string and a RAM string with the
+** same contents can have different addresses. Compare their contents
+** in that case. See core/luarom.h. */
+extern char *lua_rom_base;
+extern size_t lua_rom_size;
+#define lua_isrom(p)	((size_t)((char *)(p) - lua_rom_base) < lua_rom_size)
+LUAI_FUNC int luaS_eqshrrom (TString *a, TString *b);
+#define eqshrstr(a,b)	((a) == (b) || \
+	((lua_isrom(a) || lua_isrom(b)) && luaS_eqshrrom(a, b)))
+#endif
 
 
 LUAI_FUNC unsigned int luaS_hash (const char *str, size_t l, unsigned int seed);

@@ -48,6 +48,18 @@ unsigned int luaS_hash (const char *str, size_t l, unsigned int seed) {
 }
 
 
+#if defined(LUA_ROM)
+/* Comet/Nova (LUA_ROM): see lstring.h */
+char *lua_rom_base = NULL;
+size_t lua_rom_size = 0;
+
+int luaS_eqshrrom (TString *a, TString *b) {
+  return a->hash == b->hash && a->shrlen == b->shrlen &&
+         memcmp(getshrstr(a), getshrstr(b), a->shrlen) == 0;
+}
+#endif
+
+
 unsigned int luaS_hashlongstr (TString *ts) {
   lua_assert(ts->tt == LUA_VLNGSTR);
   if (ts->extra == 0) {  /* no hash? */

@@ -14,6 +14,14 @@
 // name 是錯誤訊息裡顯示的檔名。is_system：系統卡匣（多一個 sys 表格）。成功回傳 0
 int script_load(const char *src, size_t len, const char *name, int is_system);
 
+// 平台可以提供另一種載入方式（主機：程式已經在唯讀區，不需要編譯原始碼）。
+// 設定之後，script_load 不編譯 src，改呼叫 loader：成功要在堆疊上留下主函式、回傳 0；
+// 失敗在堆疊上留下錯誤訊息、回傳非 0。設成 NULL 恢復一般方式。
+// src 仍然要傳（引擎用它算遊戲指紋、讀 id），內容可以只是卡匣的開頭幾行。
+struct lua_State;   // 只用到指標，不需要整個 lua.h
+typedef int (*ScriptLoader)(struct lua_State *L, void *ud);
+void script_set_loader(ScriptLoader loader, void *ud);
+
 // 設定下一次 script_load() 時 rnd() 的亂數種子（0 會被換成 1）
 void script_set_seed(uint32_t seed);
 
@@ -26,6 +34,9 @@ void script_call(const char *fn);
 
 // 遊戲是否出錯（出錯後就不再呼叫遊戲）
 int script_failed(void);
+
+// 遊戲的 Lua 目前用了多少記憶體（bytes，含還沒回收的垃圾）。沒有遊戲回傳 0
+size_t script_mem(void);
 
 // 除錯用（Studio 的「狀態」分頁）：在正在執行的遊戲裡跑一段 Lua。
 // mode 0：執行一行指令。先試「return 指令」（算式：顯示結果），不行再當一般敘述執行

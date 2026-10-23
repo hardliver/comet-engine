@@ -27,4 +27,10 @@ void comet_lua_write_error(const char *fmt, const char *arg);
 #define lua_writeline()                comet_lua_write("\n", 1)
 #define lua_writestringerror(s, p)     comet_lua_write_error((s), (p))
 
+// ---- 3. 程式放在唯讀記憶體（主機的 Flash）----
+// 見 core/luarom.h。打開之後，Lua 比較短字串時，若有一邊在唯讀區就改比內容。
+// 每個平台都打開（Mac、網頁的唯讀區大小是 0，只多一次比較），
+// 這樣 Mac 版可以測試和主機完全相同的程式碼。
+#define LUA_ROM
+
 #endif

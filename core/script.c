@@ -554,6 +554,15 @@ static void report_error(void)
     failed = 1;
 }
 
+static ScriptLoader loader;
+static void *loader_ud;
+
+void script_set_loader(ScriptLoader fn, void *ud)
+{
+    loader = fn;
+    loader_ud = ud;
+}
+
 int script_load(const char *src, size_t len, const char *name, int is_system)
 {
     if (L != NULL) {
@@ -571,8 +580,10 @@ int script_load(const char *src, size_t len, const char *name, int is_system)
     open_libs(L, is_system);
     script_profile(profiling);   // 新的 Lua 環境：hook 要重新裝
 
-    // 編譯原始碼。"t" 代表只接受文字，不接受預先編譯好的二進位檔（比較安全）
-    if (luaL_loadbufferx(L, src, len, name, "t") != LUA_OK) {
+    // 編譯原始碼。"t" 代表只接受文字，不接受預先編譯好的二進位檔（比較安全）。
+    // 平台設了 loader（主機：程式已經在唯讀區）就改用它
+    int r = loader != NULL ? loader(L, loader_ud) : luaL_loadbufferx(L, src, len, name, "t");
+    if (r != LUA_OK) {
         report_error();   // 語法錯誤
         return 1;
     }
@@ -626,6 +637,13 @@ void script_call(const char *fn)
 int script_failed(void)
 {
     return failed;
+}
+
+size_t script_mem(void)
+{
+    if (L == NULL) return 0;
+    // LUA_GCCOUNT：KB 的整數部分；LUA_GCCOUNTB：剩下不到 1 KB 的 bytes
+    return (size_t)lua_gc(L, LUA_GCCOUNT) * 1024 + (size_t)lua_gc(L, LUA_GCCOUNTB);
 }
 
 // ============================================================

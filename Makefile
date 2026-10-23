@@ -11,7 +11,7 @@
 CFLAGS = -Wall -Wextra -std=c99 -O2
 
 # 核心
-CORE = core/gfx.c core/map.c core/input.c core/engine.c core/script.c core/sha256.c core/replay.c core/save.c core/clock.c core/audio.c core/system.c core/pak.c
+CORE = core/gfx.c core/map.c core/input.c core/engine.c core/script.c core/sha256.c core/replay.c core/save.c core/clock.c core/audio.c core/system.c core/pak.c core/luarom.c
 HEADERS = $(wildcard core/*.h)
 
 # Lua 5.4（third_party/lua，原始碼未修改）
