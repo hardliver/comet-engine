@@ -1,6 +1,7 @@
 # Comet
 
 Nova One 的遊戲引擎。同一份 C 核心，編譯到三個平台：Mac（開發測試）、網頁（WebAssembly）、Nova One 主機（Pico 2 W）。
+主機版的平台層在 `platform/pico/`（編譯方式、接線見該資料夾的 README）。
 
 遊戲是一個 Lua 文字檔，改遊戲不用重新編譯引擎。
 

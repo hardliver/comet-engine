@@ -1,0 +1,23 @@
+--- a/src/host/usbh.c	2026-10-23 22:07:02.648219939 +0800
++++ b/src/host/usbh.c	2026-10-23 22:07:08.053901745 +0800
+@@ -1410,8 +1410,9 @@
+ 
+       // Get first 8 bytes of device descriptor for Control Endpoint size
+       TU_LOG_USBH("Get 8 byte of Device Descriptor\r\n");
+-      TU_ASSERT(tuh_descriptor_get_device(addr0, _usbh_epbuf.ctrl, 8,
+-                                          process_enumeration, ENUM_SET_ADDR),);
++      // Nova: ask for 64 bytes like Windows does (some receivers pick their identity from this)
++      TU_ASSERT(tuh_descriptor_get(addr0, TUSB_DESC_DEVICE, 0, _usbh_epbuf.ctrl, 64,
++                                   process_enumeration, ENUM_SET_ADDR),);
+       break;
+     }
+ 
+@@ -1480,7 +1481,7 @@
+       // Get 9-byte for total length
+       uint8_t const config_idx = CONFIG_NUM - 1;
+       TU_LOG_USBH("Get Configuration[0] Descriptor (9 bytes)\r\n");
+-      TU_ASSERT(tuh_descriptor_get_configuration(daddr, config_idx, _usbh_epbuf.ctrl, 9,
++      TU_ASSERT(tuh_descriptor_get_configuration(daddr, config_idx, _usbh_epbuf.ctrl, 255,   /* Nova: Windows asks for 255 */
+                                                  process_enumeration, ENUM_GET_FULL_CONFIG_DESC),);
+       break;
+     }
