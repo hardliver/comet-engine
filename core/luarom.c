@@ -607,8 +607,12 @@ static void fz_value(Freezer *f, TValue *v)
 {
     switch (ttypetag(v)) {
         case LUA_VNIL: case LUA_VFALSE: case LUA_VTRUE: case LUA_VEMPTY: case LUA_VABSTKEY:
+            // 這些值只看型別標記，value_ 欄位沒有用到，裡面是記憶體的雜訊（每次開機不同）。
+            // 清成 0：凍結的結果每次都一樣，主機才會判斷「和 Flash 上的一樣，不用寫」
+            memset(&v->value_, 0, sizeof v->value_);
+            return;
         case LUA_VNUMINT: case LUA_VNUMFLT:
-            return;   // 不是物件，照抄
+            return;   // 數字：照抄
         case LUA_VSHRSTR: case LUA_VLNGSTR: {
             TString *s = fz_string(f, tsvalue(v));
             setsvalue(f->L, v, s);
@@ -672,7 +676,9 @@ static Table *fz_table(Freezer *f, Table *t)
         n->u.key_val = o->u.key_val;
         fz_value(f, gval(n));
         if (keyisdead(n)) {
-            n->u.key_val.gc = NULL;   // 已經刪掉的 key：指向的物件可能被回收，清掉
+            memset(&n->u.key_val, 0, sizeof n->u.key_val);   // 已經刪掉的 key：指向的物件可能被回收，清掉
+        } else if (keytt(n) == LUA_VNIL || keytt(n) == LUA_VFALSE || keytt(n) == LUA_VTRUE) {
+            memset(&n->u.key_val, 0, sizeof n->u.key_val);   // 空位或布林 key：同上，只有雜訊
         } else if (keyiscollectable(n)) {
             TValue k;
             getnodekey(f->L, &k, n);
@@ -681,13 +687,20 @@ static Table *fz_table(Freezer *f, Table *t)
         }
     }
 
-    Table copy = *t;
+    // 表格本身也一樣：先清成 0（對齊用的空隙），再一個一個欄位填
+    Table copy;
+    memset(&copy, 0, sizeof copy);
     copy.next = NULL;
+    copy.tt = t->tt;
     copy.marked = 0;          // 灰色：GC 不會碰
     copy.flags = (lu_byte)flags;
+    copy.lsizenode = t->lsizenode;
+    copy.alimit = t->alimit;
+    copy.array = NULL;
+    copy.node = t->node;      // 沒有雜湊部分時指向 Lua 共用的空節點（下面有的話會換掉）
+    copy.lastfree = NULL;
     copy.metatable = NULL;
     copy.gclist = NULL;
-    copy.array = NULL;
     if (f->err == NULL && asize) copy.array = fz_append(f, arr, asize * sizeof(TValue), ALIGNOF(TValue));
     if (f->err == NULL && nsize) {
         Node *rn = fz_append(f, nodes, nsize * sizeof(Node), ALIGNOF(Node));

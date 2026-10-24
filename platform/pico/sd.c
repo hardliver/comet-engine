@@ -103,6 +103,58 @@ void sd_stream_close(void)
     f_close(&stream);
 }
 
+size_t sd_stream_pos(void)
+{
+    // 檔案讀到哪裡 - 緩衝區裡還沒交出去的 = 呼叫的人實際讀到哪裡
+    return (size_t)f_tell(&stream) - (sbuf_len - sbuf_pos);
+}
+
+size_t sd_stream_size(void)
+{
+    return (size_t)f_size(&stream);
+}
+
+// CRC32（和 zip、PNG 用的同一種）：一個 bit 一個 bit 算，慢但很短，64 KB 約幾毫秒
+static uint32_t crc32_update(uint32_t crc, const uint8_t *p, size_t n)
+{
+    crc = ~crc;
+    while (n--) {
+        crc ^= *p++;
+        for (int k = 0; k < 8; ++k) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+    return ~crc;
+}
+
+int sd_fingerprint(const char *path, uint32_t *size, uint32_t *stamp, uint32_t *crc)
+{
+    FILINFO fno;
+    FRESULT fr = f_stat(path, &fno);
+    if (fr != FR_OK) {
+        snprintf(err_msg, sizeof err_msg, "SD %s: %s", path, FRESULT_str(fr));
+        return 1;
+    }
+    *size = (uint32_t)fno.fsize;
+    *stamp = ((uint32_t)fno.fdate << 16) | fno.ftime;   // FatFs 的日期、時間各 16 bits
+    // 開頭 64 KB 的 CRC：同名同大小但內容不同的檔案（例如重新編譯）也分得出來
+    if (sd_stream_open(path) != 0) return 1;
+    uint32_t c = 0;
+    size_t left = 64 * 1024;
+    while (left > 0) {
+        if (sbuf_pos == sbuf_len) {
+            if (f_read(&stream, sbuf, sizeof sbuf, &sbuf_len) != FR_OK || sbuf_len == 0) break;
+            sbuf_pos = 0;
+        }
+        size_t k = sbuf_len - sbuf_pos;
+        if (k > left) k = left;
+        c = crc32_update(c, sbuf + sbuf_pos, k);
+        sbuf_pos += (UINT)k;
+        left -= k;
+    }
+    sd_stream_close();
+    *crc = c;
+    return 0;
+}
+
 // ---- 診斷：自己送 CMD0 ----
 // SD 卡的 SPI 模式開機流程（SD 規格 7.2.1）：
 //   1. CS 拉高，送至少 74 個時脈（這裡送 80 個 = 10 bytes 的 0xFF），讓卡片進入準備狀態

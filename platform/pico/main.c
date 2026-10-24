@@ -30,6 +30,49 @@
 #include "lauxlib.h"
 #include "tusb.h"
 #include "xinput_host.h"   // XINPUT_GAMEPAD_* 按鍵位元（要先 include tusb.h）
+#include "hardware/watchdog.h"
+#include "hardware/sync.h"
+#include "hardware/structs/scb.h"
+
+// ============================================================================
+// 當機紀錄（除錯用）
+// ============================================================================
+// 程式讀寫到不該碰的位址、執行到壞掉的指令時，CPU 會跳到 HardFault。
+// HardFault 比所有中斷都優先，畫面的中斷也停了 → 電視沒訊號，什麼都看不到。
+// 所以在 HardFault 裡把「當時執行到哪裡」記在一塊開機時不會清掉的 RAM，
+// 用看門狗（watchdog）重新開機；下一次開機發現有紀錄，就顯示在畫面上，也先不載入 game.nvc（不然又當）。
+// PC 是當機那一行程式的位址，用 arm-none-eabi-addr2line 可以查出是哪個函式。
+
+#define CRASH_MAGIC 0x4E4F5641u   // "NOVA"
+typedef struct { uint32_t magic, pc, lr, cfsr, hfsr, bfar; } CrashInfo;
+static CrashInfo __uninitialized_ram(crash);   // 重新開機（看門狗）後內容還在
+
+void __attribute__((used)) hardfault_record(uint32_t *frame)
+{
+    // frame：CPU 進 HardFault 時自動存在堆疊上的 8 個暫存器：r0 r1 r2 r3 r12 lr pc xpsr
+    crash.pc = frame[6];
+    crash.lr = frame[5];
+    crash.cfsr = scb_hw->cfsr;   // 是哪一種錯（讀寫錯、指令錯、對齊錯…）
+    crash.hfsr = scb_hw->hfsr;
+    crash.bfar = *(volatile uint32_t *)0xE000ED38u;   // 讀寫錯的位址（BFAR）
+    crash.magic = CRASH_MAGIC;
+    watchdog_reboot(0, 0, 10);
+    while (1) {}
+}
+
+// naked：編譯器不要自己加進出函式的程式。只做一件事：找出存暫存器的那個堆疊，交給上面的 C 函式。
+// lr 的 bit 2 說明當機前用的是哪個堆疊（MSP 或 PSP）。
+// 名字不能叫 isr_hardfault：SD 卡的函式庫已經有一個（它最後會停在斷點，沒有除錯器時就卡死），
+// 所以開機時用 exception_set_exclusive_handler 把中斷向量表裡的 HardFault 換成這個
+static void __attribute__((naked)) nova_hardfault(void)
+{
+    __asm volatile(
+        "tst lr, #4\n"
+        "ite eq\n"
+        "mrseq r0, msp\n"
+        "mrsne r0, psp\n"
+        "b hardfault_record\n");
+}
 
 // cart_data.c（編譯時產生）：卡匣的原始碼
 extern const char cart_src[];
@@ -208,34 +251,62 @@ static int rom_loader(lua_State *L, void *ud)
     return LUA_OK;
 }
 
-// ---- 載入中畫面 ----
-// 直接畫在 HDMI 的顯示畫面上（引擎還沒有遊戲可以畫）。寫 Flash 時畫面會閃，
-// 每寫 64 次更新一次數字就夠了，太常重畫只是浪費時間
+// ---- 安裝中畫面 ----
+// 直接畫在 HDMI 的顯示畫面上（引擎還沒有遊戲可以畫）。
+// 寫 Flash 時畫面的中斷照常在跑（romflash.c），所以畫面不會斷。每寫 32 次更新一次就夠了
 static uint32_t loading_t0;
 static unsigned loading_ops;
 
-static void show_loading(void)
+static void show_installing(void)
 {
-    memset(video_display_buffer(), 0, SCREEN_W * SCREEN_H);   // 0 號色 = 黑
+    uint8_t *fb = video_display_buffer();
+    memset(fb, 0, SCREEN_W * SCREEN_H);   // 0 號色 = 黑
     video_set_color(0, 0x00);
     video_set_color(OVERLAY_COLOR, 0xFF);
-    overlay_text(4, 4, "LOADING GAME.NVC");
-    overlay_text(4, 12, "FIRST TIME TAKES ABOUT 30S");
+    // 進度：遊戲檔讀到哪裡（安裝的最後還有一小段是遊戲自己的載入，停在 100% 一下是正常的）
+    size_t total = sd_stream_size();
+    unsigned pct = total ? (unsigned)((uint64_t)sd_stream_pos() * 100 / total) : 0;
+    if (pct > 100) pct = 100;
+    overlay_text(4, 4, "INSTALLING GAME.NVC");
+    overlay_text(4, 12, "ONLY THE FIRST TIME");
+    // 進度條：外框 + 填滿
+    int x0 = 4, y0 = 24, w = SCREEN_W - 8, h = 8;
+    for (int x = x0; x < x0 + w; ++x) { fb[y0 * SCREEN_W + x] = OVERLAY_COLOR; fb[(y0 + h - 1) * SCREEN_W + x] = OVERLAY_COLOR; }
+    for (int y = y0; y < y0 + h; ++y) { fb[y * SCREEN_W + x0] = OVERLAY_COLOR; fb[y * SCREEN_W + x0 + w - 1] = OVERLAY_COLOR; }
+    int fill = (w - 4) * (int)pct / 100;
+    for (int y = y0 + 2; y < y0 + h - 2; ++y)
+        for (int x = x0 + 2; x < x0 + 2 + fill; ++x) fb[y * SCREEN_W + x] = OVERLAY_COLOR;
     char s[64];
-    snprintf(s, sizeof s, "WR %u ER %u FE %u %uS", romflash_pages_written(),
-             romflash_sectors_erased(), romflash_errors(),
-             (unsigned)((time_us_32() - loading_t0) / 1000000));
-    overlay_text(4, 24, s);
+    snprintf(s, sizeof s, "%u%%  WR %u ER %u FE %u  %uS", pct, romflash_pages_written(),
+             romflash_erases(), romflash_errors(), (unsigned)((time_us_32() - loading_t0) / 1000000));
+    overlay_text(4, 36, s);
 }
 
-static void loading_progress(void)
+static void installing_progress(void)
 {
-    if (++loading_ops % 64 == 0) show_loading();
+    if (++loading_ops % 32 == 0) show_installing();
 }
+
+// 韌體版本：用編譯的日期時間。換了韌體，記憶體位址可能不同（凍結的表格裡有指向韌體的指標），
+// 已安裝的遊戲要重新安裝
+static const char FIRMWARE_ID[] = __DATE__ " " __TIME__;
 
 // 成功回傳 0（*err 是 engine_load 的結果）；找不到或格式不對回傳 1（改用別的卡匣）
+//
+// 流程：
+//   1. 讀遊戲檔的身分（大小、修改時間、開頭的 CRC），和 Flash 上的安裝紀錄比對
+//   2. 已安裝 → 跳過建置，直接執行（約 1 秒）
+//      沒安裝 → 安裝：一邊從 SD 讀位元組碼，一邊建進 Flash（luarom_build）
+//   3. 執行遊戲的最上層程式（freeze、newimage 會接在後面寫；已安裝時內容一樣，不會寫）
+//   4. 剛安裝的：最後寫安裝紀錄，下次開機就不用再裝
+// 之後從網路（GitHub）下載安裝也是同一套，只是第 2 步的來源換成下載的資料
 static int load_nvc(const char *path, char *info, size_t info_size, int *err)
 {
+    RomId id;
+    memset(&id, 0, sizeof id);   // 整塊清 0：比對時用 memcmp，沒用到的 bytes 也要一樣
+    if (sd_fingerprint(path, &id.size, &id.stamp, &id.crc) != 0) return 1;
+    snprintf(id.firmware, sizeof id.firmware, "%s", FIRMWARE_ID);
+
     if (sd_stream_open(path) != 0) return 1;
     char magic[8];
     uint32_t head_len;
@@ -249,47 +320,51 @@ static int load_nvc(const char *path, char *info, size_t info_size, int *err)
     if (head == NULL || sd_stream_read(NULL, head, head_len)) {
         free(head);
         sd_stream_close();
+        snprintf(info, info_size, "GAME.NVC: READ ERROR");
         return 1;
     }
 
-    // 「載入中」畫面：第一次裝一款遊戲要寫很久，讓玩家知道主機沒當機
-    loading_t0 = time_us_32();
-    show_loading();
-    romflash_set_progress(loading_progress);
-
-    // 建唯讀區：和 Flash 上一樣的部分不寫（同一款遊戲第二次開就很快）。
-    // 第一次裝一款大遊戲要寫 1–2 MB，大約 30 秒，這段時間畫面會閃或沒有訊號
     uint32_t t0 = time_us_32();
-    RomWriter w;
-    romflash_writer(&w);
-    lua_State *T = luaL_newstate();   // 只借它的字串雜湊種子
-    char e[96];
-    int r = luarom_build(T, sd_stream_read, NULL, &w, &rom_root, e, sizeof e);
-    lua_close(T);
-    sd_stream_close();
-    if (r != 0) {
-        platform_log(e);
-        romflash_set_progress(NULL);
-        free(head);
-        snprintf(info, info_size, "GAME.NVC: BUILD FAILED");
-        return 1;
+    int installed = romflash_installed(&id, &rom_root);
+    if (!installed) {
+        loading_t0 = t0;
+        show_installing();
+        romflash_set_progress(installing_progress);
+        RomWriter w;
+        romflash_begin_install(&w);
+        lua_State *T = luaL_newstate();   // 只借它的字串雜湊種子
+        char e[96];
+        int r = luarom_build(T, sd_stream_read, NULL, &w, &rom_root, e, sizeof e);
+        lua_close(T);
+        if (r != 0) {
+            sd_stream_close();
+            platform_log(e);
+            romflash_set_progress(NULL);
+            free(head);
+            snprintf(info, info_size, "GAME.NVC: INSTALL FAILED");
+            return 1;
+        }
+        romflash_build_done(w.used);
     }
-    romflash_finish_build(w.used);
-    unsigned code_kb = (unsigned)(w.used / 1024);
+    sd_stream_close();
+    size_t code_used = romflash_used();
 
     // 告訴引擎：程式在唯讀區；圖片、字型、地圖、凍結的表格也接著放在那裡
-    luarom_activate(romflash_base(), ROMFLASH_SIZE);
+    luarom_activate(romflash_base(), romflash_capacity());
     gfx_set_rom_store(romflash_store);
     luarom_set_append(romflash_append);
     script_set_loader(rom_loader, NULL);
     *err = engine_load(head, head_len);   // 開頭原始碼：引擎只用來讀遊戲 id
-    // （遊戲最上層的程式在這裡執行：freeze、newimage 也會寫 Flash，所以載入中畫面到這裡才停）
     romflash_set_progress(NULL);
     free(head);
 
-    snprintf(info, info_size, "CART GAME.NVC ROM %uK+%uK WR %u ER %u FE %u %uS",
-             code_kb, (unsigned)((romflash_used() - w.used) / 1024),
-             romflash_pages_written(), romflash_sectors_erased(), romflash_errors(),
+    // 載入成功才寫安裝紀錄（失敗的話下次重新安裝）
+    if (!installed && *err == 0) romflash_finish_install(&id, rom_root);
+
+    snprintf(info, info_size, "CART %s ROM %uK+%uK WR %u ER %u FE %u %uS",
+             installed ? "INSTALLED" : "NEW", (unsigned)(code_used / 1024),
+             (unsigned)((romflash_used() - code_used) / 1024),
+             romflash_pages_written(), romflash_erases(), romflash_errors(),
              (unsigned)((time_us_32() - t0) / 1000000));
     return 0;
 }
@@ -326,6 +401,10 @@ int main(void)
 
 static void nova_main(void)
 {
+    // 把中斷向量表（在 RAM，SCB 的 VTOR 指著它）的第 3 格 HardFault 換成我們的。
+    // 不用 SDK 的 exception_set_exclusive_handler：SD 卡函式庫已經放了自己的，SDK 會判斷「已經有人設定」而停機
+    ((void (**)(void))scb_hw->vtor)[3] = nova_hardfault;
+    __dsb();
     nova_clocks();
     video_start();
     usb_pad_start();
@@ -345,7 +424,19 @@ static void nova_main(void)
     int err;
     char *sd_src = NULL;
     size_t sd_len = 0;
-    int sd_ok = sd_mount() == 0;
+    // 上次當機了：顯示紀錄，這次不載入 game.nvc
+    bool crashed = crash.magic == CRASH_MAGIC;
+    char crash_text[2][64];
+    if (crashed) {
+        crash.magic = 0;
+        snprintf(crash_text[0], 64, "CRASH PC %08X LR %08X", (unsigned)crash.pc, (unsigned)crash.lr);
+        snprintf(crash_text[1], 64, "CFSR %08X HFSR %08X BFAR %08X",
+                 (unsigned)crash.cfsr, (unsigned)crash.hfsr, (unsigned)crash.bfar);
+        platform_log(crash_text[0]);
+        platform_log(crash_text[1]);
+    }
+
+    int sd_ok = !crashed && sd_mount() == 0;
     // game.nvc 失敗的原因先記下來：後面試 game.lua 時 sd_error() 會被蓋掉，
     // 只顯示「找不到 game.lua」就看不出 game.nvc 是哪裡出問題
     char nvc_why[64] = "";
@@ -381,12 +472,12 @@ static void nova_main(void)
         // 1. 把上一幀畫好的畫面交給 HDMI。空白期約 1.4 ms，複製 76 KB 約 0.5 ms，來得及
         memcpy(video_display_buffer(), gfx_framebuffer(), SCREEN_W * SCREEN_H);
         video_set_palette(gfx_palette());
-        bool overlay = err || script_failed() || show_stats;
+        bool overlay = err || script_failed() || show_stats || crashed;
         if (overlay) video_set_color(OVERLAY_COLOR, 0xFF);   // 白色
 
         // 2. 疊字：出錯時顯示錯誤訊息；按住 SELECT + L + R 一秒切換狀態顯示
-        if (err || script_failed()) {
-            overlay_text(4, 4, err ? "LOAD ERROR" : "LUA ERROR");
+        if (err || script_failed() || crashed) {
+            overlay_text(4, 4, crashed ? "LAST BOOT CRASHED" : err ? "LOAD ERROR" : "LUA ERROR");
             for (int i = 0; i < LOG_LINES; ++i)
                 overlay_text(4, 14 + i * 7, log_buf[(log_next + i) % LOG_LINES]);
         }

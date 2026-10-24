@@ -132,6 +132,14 @@ static void __scratch_x("") convert_line(uint8_t *dst, int y)
     }
 }
 
+// 讓軟體中斷「待處理」。不用 SDK 的 irq_set_pending：它的程式放在 Flash，
+// 寫 Flash 的時候畫面中斷還要繼續跑（見 romflash.c），那時候從 Flash 讀程式會當機。
+// 這裡直接寫 NVIC 的「設定待處理」暫存器（每個 bit 是一個中斷），而且是 inline，程式就在呼叫的函式裡
+static inline void pend_convert(void)
+{
+    nvic_hw->ispr[convert_irq / 32] = 1u << (convert_irq % 32);
+}
+
 // __scratch_x：把中斷函式放進 RAM 的 scratch 區，不必從 Flash 讀程式，反應比較快
 void __scratch_x("") dma_irq_handler(void)
 {
@@ -148,7 +156,7 @@ void __scratch_x("") dma_irq_handler(void)
         ch->transfer_count = count_of(vblank_line_vsync_off);
         // 空白期快結束時，先把畫面第 0 列換算好（這時兩條列緩衝都沒有在送）。
         // 不能太早：main.c 在空白期一開始才把新的一幀複製到 display（約 0.5 ms = 16 列）
-        if (v_scanline == MODE_V_BLANK_LINES - 6) { convert_row = 0; irq_set_pending(convert_irq); }
+        if (v_scanline == MODE_V_BLANK_LINES - 6) { convert_row = 0; pend_convert(); }
     } else if (!vactive_cmdlist_posted) {
         ch->read_addr = (uintptr_t)vactive_line;
         ch->transfer_count = count_of(vactive_line);
@@ -164,7 +172,7 @@ void __scratch_x("") dma_irq_handler(void)
         // 另一條緩衝裝的是 src_y - 1，它的第二次也已經送完（剛剛觸發這次中斷的就是它），可以安全覆寫。
         if ((out_line & 1) == 0 && src_y + 1 < SCREEN_H) {
             convert_row = src_y + 1;
-            irq_set_pending(convert_irq);   // 中斷結束後，軟體中斷才會跑
+            pend_convert();   // 中斷結束後，軟體中斷才會跑
         }
         ch->read_addr = (uintptr_t)buf;
         ch->transfer_count = MODE_H_ACTIVE_PIXELS / sizeof(uint32_t);
@@ -242,46 +250,4 @@ void video_start(void)
     dma_channel_start(DMACH_PING);
 }
 
-// ---- 寫 Flash 時暫停畫面 ----
-// 為什麼需要：寫 Flash 時（romflash.c 的 flash_safe_execute）這個核心的中斷全部關掉，
-// 擦一個磁區要約 45 ms。這段時間 DMA 送完一段，中斷沒辦法幫它換下一段的位址，
-// DMA 就從上一段的結尾「繼續往後讀」：每一列往後跑 2.5 KB，幾十毫秒就跑出 RAM 的範圍，
-// 讀到不存在的位址 → DMA 出錯停下來，之後中斷恢復也救不回來，HDMI 永遠沒有訊號。
-// （電腦上的 Flash 模擬器沒有 HDMI，所以測不出來；2026-10-24 實機發現）
-// 做法：寫之前把兩個 DMA 通道停掉，寫完從垂直空白期的開頭重新開始送。
-// 電視會短暫失去同步（閃一下或沒訊號），但寫完一定會恢復。
-
-static void stop_channel(uint ch)
-{
-    // 先關掉「完成後觸發另一個通道」：不然停了這個，另一個又把它叫起來
-    hw_clear_bits(&dma_hw->ch[ch].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
-}
-
-void video_pause(void)
-{
-    irq_set_enabled(DMA_IRQ_0, false);
-    stop_channel(DMACH_PING);
-    stop_channel(DMACH_PONG);
-    dma_channel_abort(DMACH_PING);
-    dma_channel_abort(DMACH_PONG);
-    dma_hw->ints0 = (1u << DMACH_PING) | (1u << DMACH_PONG);   // 清掉還沒處理的中斷
-}
-
-void video_resume(void)
-{
-    // HSTX 可能停在一個指令的中間：關掉再打開，從乾淨的狀態開始
-    hw_clear_bits(&hstx_ctrl_hw->csr, HSTX_CTRL_CSR_EN_BITS);
-    hw_set_bits(&hstx_ctrl_hw->csr, HSTX_CTRL_CSR_EN_BITS);
-
-    // 和 video_start 一樣的起點：兩個通道都先送空白期的列，掃描線從 2 開始算
-    dma_pong = false;
-    v_scanline = 2;
-    vactive_cmdlist_posted = false;
-    for (uint ch = DMACH_PING; ch <= DMACH_PONG; ++ch) {
-        dma_hw->ch[ch].read_addr = (uintptr_t)vblank_line_vsync_off;
-        dma_hw->ch[ch].transfer_count = count_of(vblank_line_vsync_off);
-        hw_set_bits(&dma_hw->ch[ch].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
-    }
-    irq_set_enabled(DMA_IRQ_0, true);
-    dma_channel_start(DMACH_PING);
-}
+uint video_convert_irq(void) { return convert_irq; }

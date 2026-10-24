@@ -331,9 +331,9 @@ void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance,
 
 static void core1_main(void)
 {
-    // 讓另一個核心寫 Flash 時可以叫這個核心暫停（romflash.c 的 flash_safe_execute）：
+    // 讓另一個核心寫 Flash 時可以叫這個核心暫停（romflash.c 的 multicore_lockout）：
     // 寫 Flash 的時候不能從 Flash 讀程式，這個核心的程式也在 Flash 上
-    flash_safe_execute_core_init();
+    multicore_lockout_victim_init();
 
     pio_usb_configuration_t cfg = PIO_USB_DEFAULT_CONFIG;
     cfg.pin_dp = 10;   // GP10 = D+，GP11 = D-（PIO-USB 規定 D- = D+ 的下一支）
