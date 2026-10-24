@@ -49,7 +49,8 @@
 
 #define CRASH_MAGIC 0x4E4F5641u   // "NOVA"
 typedef struct { uint32_t magic, pc, lr, cfsr, hfsr, bfar, r0, core, stack0, vtor, slot, ndiff, firstdiff, dma;
-                 uint32_t r1, r2, r3, r12, phase, xip_bad; } CrashInfo;
+                 uint32_t r1, r2, r3, r12, phase, xip_bad;
+                 uint32_t bad_addr[3], bad_cache[3], bad_flash[3]; } CrashInfo;   // 前 3 個快取不一致的字
 static uint32_t vt_snapshot[68];   // 開機登記完後的向量表（比對哪些格子被改）
 static CrashInfo __uninitialized_ram(crash);   // 重新開機（看門狗）後內容還在
 
@@ -70,7 +71,13 @@ static uint32_t __not_in_flash_func(xip_compare)(uint32_t addr)
         if (a < 0x10000000u) continue;
         uint32_t cached = *(volatile uint32_t *)a;
         uint32_t direct = *(volatile uint32_t *)(a - 0x10000000u + 0x14000000u);   // XIP_NOCACHE_NOALLOC
-        if (cached != direct) bad++;
+        if (cached != direct) {
+            if (crash.xip_bad + bad < 3) {
+                uint32_t k = crash.xip_bad + bad;
+                crash.bad_addr[k] = a; crash.bad_cache[k] = cached; crash.bad_flash[k] = direct;
+            }
+            bad++;
+        }
     }
     return bad;
 }
@@ -84,7 +91,9 @@ void __attribute__((used)) __not_in_flash_func(hardfault_record)(uint32_t *frame
     crash.r0 = frame[0];          // 「沒有處理函式的中斷」時，r0 是那個中斷的編號
     crash.r1 = frame[1]; crash.r2 = frame[2]; crash.r3 = frame[3]; crash.r12 = frame[4];
     crash.phase = boot_phase;
-    crash.xip_bad = xip_compare(crash.pc) + xip_compare(crash.lr & ~1u);
+    crash.xip_bad = 0;
+    crash.xip_bad = xip_compare(crash.pc);
+    crash.xip_bad += xip_compare(crash.lr & ~1u);
     crash.core = *(volatile uint32_t *)(SIO_BASE + 0x000);   // SIO CPUID：哪個核心（0 或 1）
     crash.vtor = scb_hw->vtor;                               // 這個核心當時的中斷向量表位址
     crash.slot = ((volatile uint32_t *)crash.vtor)[16 + (crash.r0 & 63)];   // 表裡那個中斷的處理函式
@@ -134,6 +143,14 @@ void protect_vector_table(void)
     // 0x20000000–0x200000FF（向量表前 64 格，含第 41 格）；AP = 11：所有人唯讀
     mpu_hw->rbar = 0x20000000u | (3u << M33_MPU_RBAR_AP_LSB);
     mpu_hw->rlar = 0x200000E0u | M33_MPU_RLAR_EN_BITS;
+    // 第 1 個區域：整個 Flash 視窗 0x10000000–0x13FFFFFF 設成唯讀（仍然可以執行程式）。
+    // 2026-10-24：當機時快取裡的程式碼被改掉、Flash 本身沒壞。RP2350 的 Flash 快取「可以寫」
+    // （為了外接 PSRAM 設計的）：程式寫到 Flash 的位址不會出錯，而是默默改掉快取裡的內容。
+    // 設成唯讀後，誰寫到這裡 CPU 當場出錯，當機紀錄的 PC 就是寫的那一行、MMFAR 是被寫的位址。
+    // （正常的 Flash 寫入 flash_range_program 走另一條路，不受影響）
+    mpu_hw->rnr = 1;
+    mpu_hw->rbar = 0x10000000u | (3u << M33_MPU_RBAR_AP_LSB);
+    mpu_hw->rlar = 0x13FFFFE0u | M33_MPU_RLAR_EN_BITS;
     // PRIVDEFENA：其他沒設定的位址照原本的規則（不然整個記憶體都不能用）
     mpu_hw->ctrl = M33_MPU_CTRL_PRIVDEFENA_BITS | M33_MPU_CTRL_ENABLE_BITS;
     __dsb(); __isb();
@@ -749,6 +766,11 @@ static void nova_main(void)
         snprintf(t, sizeof t, "PHASE %s XIP BAD %u", crash.phase == PHASE_PLAYING ? "PLAYING" :
                  crash.phase == PHASE_LOADING ? "LOADING" : "BOOT", (unsigned)crash.xip_bad);
         platform_log(t);
+        for (uint32_t k = 0; k < crash.xip_bad && k < 3; ++k) {
+            snprintf(t, sizeof t, "XIP %08X cache %08X flash %08X", (unsigned)crash.bad_addr[k],
+                     (unsigned)crash.bad_cache[k], (unsigned)crash.bad_flash[k]);
+            platform_log(t);
+        }
     }
 
     // 上次當機：如果是載入途中當的，這次先不載入 SD 卡的遊戲（不然一開機又當）。
