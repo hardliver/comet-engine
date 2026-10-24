@@ -552,6 +552,67 @@ static const luaL_Reg api[] = {
 // 2. 建立沙盒：只開放安全、不會破壞同步的功能
 // ============================================================
 
+// ---- 出錯時附上「呼叫堆疊」（平台可選，主機用）----
+// 一般的 Lua 錯誤訊息只有一行（"game:9537: attempt to index a nil value"），
+// 看不出是誰呼叫的。打開後，錯誤訊息後面會接上 stack traceback（一層一層是誰呼叫的）。
+// 協程（coroutine）裡出的錯，原本的堆疊在 resume 回來時就丟掉了，所以 coroutine.resume 也換成會附上堆疊的版本。
+// 預設關閉：網頁 Studio 有自己的錯誤顯示，不改變它看到的訊息
+static int traceback_on;
+void script_set_traceback(int on) { traceback_on = on; }
+
+// pcall 的「訊息處理函式」：Lua 出錯、堆疊還沒拆掉之前呼叫，這時才拿得到完整的呼叫堆疊
+static int traceback_handler(lua_State *L)
+{
+    const char *msg = lua_tostring(L, 1);
+    luaL_traceback(L, L, msg != NULL ? msg : "（錯誤不是字串）", 1);
+    return 1;
+}
+
+// 和 Lua 內建的 coroutine.resume 一樣（lcorolib.c 的 auxresume），只差在出錯時附上協程裡的堆疊
+static int resume_traceback(lua_State *L)
+{
+    lua_State *co = lua_tothread(L, 1);
+    luaL_argexpected(L, co, 1, "thread");
+    int narg = lua_gettop(L) - 1;
+    if (!lua_checkstack(co, narg)) {
+        lua_pushboolean(L, 0);
+        lua_pushliteral(L, "too many arguments to resume");
+        return 2;
+    }
+    lua_xmove(L, co, narg);
+    int nres;
+    int status = lua_resume(co, L, narg, &nres);
+    if (status == LUA_OK || status == LUA_YIELD) {
+        if (!lua_checkstack(L, nres + 1)) {
+            lua_pop(co, nres);
+            lua_pushboolean(L, 0);
+            lua_pushliteral(L, "too many results to resume");
+            return 2;
+        }
+        lua_pushboolean(L, 1);
+        lua_xmove(co, L, nres);
+        return nres + 1;
+    }
+    // 出錯：協程的堆疊還在，接在錯誤訊息後面
+    const char *msg = lua_tostring(co, -1);
+    lua_pushboolean(L, 0);
+    luaL_traceback(L, co, msg != NULL ? msg : "（錯誤不是字串）", 0);
+    lua_pop(co, 1);
+    return 2;
+}
+
+// lua_pcall，打開堆疊時加上訊息處理函式。nargs 個參數已經在函式上面
+static int pcall_traced(lua_State *L, int nargs)
+{
+    if (!traceback_on) return lua_pcall(L, nargs, 0, 0);
+    int base = lua_gettop(L) - nargs;   // 被呼叫的函式在這個位置
+    lua_pushcfunction(L, traceback_handler);
+    lua_insert(L, base);                // 放到函式下面
+    int r = lua_pcall(L, nargs, 0, base);
+    lua_remove(L, base);                // 拿掉處理函式（出錯時錯誤訊息還在最上面）
+    return r;
+}
+
 static void open_libs(lua_State *L, int is_system)
 {
     // 只開這幾個標準函式庫；io、os、package、debug 根本沒有編譯進來
@@ -566,6 +627,13 @@ static void open_libs(lua_State *L, int is_system)
     };
     for (const luaL_Reg *lib = libs; lib->func != NULL; lib++) {
         luaL_requiref(L, lib->name, lib->func, 1);
+        lua_pop(L, 1);
+    }
+
+    if (traceback_on) {
+        lua_getglobal(L, "coroutine");
+        lua_pushcfunction(L, resume_traceback);
+        lua_setfield(L, -2, "resume");
         lua_pop(L, 1);
     }
 
@@ -648,7 +716,7 @@ int script_load(const char *src, size_t len, const char *name, int is_system)
         return 1;
     }
     // 執行檔案最外層的程式碼（定義函式、設定初始值）
-    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+    if (pcall_traced(L, 0) != LUA_OK) {
         report_error();
         return 1;
     }
@@ -689,7 +757,7 @@ void script_call(const char *fn)
         return;
     }
     // pcall = protected call：遊戲出錯時不會讓整個引擎當掉，而是回傳錯誤
-    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+    if (pcall_traced(L, 0) != LUA_OK) {
         report_error();
     }
 }

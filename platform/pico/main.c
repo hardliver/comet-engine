@@ -798,6 +798,7 @@ static void nova_main(void)
     }
 
     engine_init();
+    script_set_traceback(1);   // Lua 出錯時，紀錄檔裡附上是誰呼叫的（core/script.h）
     // 載入時用固定的亂數種子：遊戲載入時如果用到 rnd（例如產生地圖），放進 Flash 的內容才會每次一樣
     // （2026-10-24 實機：用開機時間當種子，已安裝的遊戲每次開機還要重寫 1284 頁）。
     // 載入完才換成隨機的（下面的 script_reseed）

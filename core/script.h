@@ -67,4 +67,7 @@ void script_set_watch(ScriptWatch fn, unsigned every_instr);
 // 只能在「Lua 呼叫進來的 C 函式」裡用（那時候回收是安全的）。
 void *script_malloc(size_t n);
 
+// 出錯時在錯誤訊息後面附上呼叫堆疊（包含協程裡的）。要在載入遊戲前設定。預設關閉（主機打開）
+void script_set_traceback(int on);
+
 #endif
