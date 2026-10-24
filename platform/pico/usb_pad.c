@@ -12,12 +12,14 @@
 //   3. 拔插偵測靠 D+/D- 的外部 4.7 kΩ 下拉電阻（RP2350 Erratum E9）。
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "pico/flash.h"
 #include "hardware/structs/scb.h"
 #include "tusb.h"
+#include "host/hcd.h"      // hcd_port_connect_status、hcd_event_device_*（看門狗模擬拔插用）
 #include "pio_usb.h"
 #include "xinput_host.h"
 #include "usb_pad.h"
@@ -58,6 +60,69 @@ static void pad_clear(void)
 }
 
 // ============================================================================
+// USB 事件紀錄：第二個核心記下來，第一個核心寫進 SD 卡的 nova_log.txt
+// ============================================================================
+// 為什麼不直接在這裡寫 SD：SD 卡（FatFs）是第一個核心在用，兩個核心同時碰會壞檔。
+// 做法是「環狀佇列」：這個核心只改 ev_head，另一個核心只改 ev_tail，各寫各的，不需要鎖。
+// 滿了就丟掉新的事件（紀錄是診斷用，丟幾筆沒關係）。
+
+typedef struct {
+    uint32_t ms;       // 開機後幾毫秒
+    uint8_t  kind;     // EV_*
+    uint16_t a, b;     // 依種類：VID／PID、位址、結果碼……
+} UsbEvent;
+
+enum {
+    EV_MOUNT = 1,      // 裝置列舉完成（a = VID，b = PID）
+    EV_UMOUNT,         // 裝置拔掉／斷線（a = 位址）
+    EV_PROBE,          // Windows 式請求（a = 第幾步，b = 結果：0 成功）
+    EV_XI_MOUNT,       // XInput 驅動接上（a = 類型，b = 手把連上了沒）
+    EV_XI_UMOUNT,
+    EV_FIRST_INPUT,    // 這次連線收到的第一筆按鍵資料（a = 0 XInput、1 Switch Pro）
+    EV_REPLUG,         // 看門狗「模擬拔插」（a = 原因：1 列舉失敗、2 Windows 請求失敗）
+};
+
+#define EV_N 32        // 佇列長度（2 的次方：索引用 & (EV_N-1) 繞回）
+static UsbEvent ev_buf[EV_N];
+static volatile uint32_t ev_head, ev_tail;   // head：下一筆寫哪裡（核心 1）；tail：下一筆讀哪裡（核心 0）
+
+static void ev_push(uint8_t kind, uint16_t a, uint16_t b)
+{
+    uint32_t h = ev_head;
+    if (h - ev_tail >= EV_N) return;          // 滿了
+    UsbEvent *e = &ev_buf[h & (EV_N - 1)];
+    e->ms = to_ms_since_boot(get_absolute_time());
+    e->kind = kind; e->a = a; e->b = b;
+    __dmb();                                   // 確定內容先寫好，另一個核心才看到 head 變了
+    ev_head = h + 1;
+}
+
+bool usb_pad_next_log(char *out, int cap)
+{
+    uint32_t t = ev_tail;
+    if (t == ev_head) return false;
+    __dmb();                                   // 先看到 head，再讀內容
+    UsbEvent e = ev_buf[t & (EV_N - 1)];
+    ev_tail = t + 1;
+    unsigned s = e.ms / 1000, ms = e.ms % 1000;
+    switch (e.kind) {
+    case EV_MOUNT:   snprintf(out, cap, "usb %u.%03u: mount %04X:%04X", s, ms, e.a, e.b); break;
+    case EV_UMOUNT:  snprintf(out, cap, "usb %u.%03u: unmount addr %u", s, ms, e.a); break;
+    case EV_PROBE:   snprintf(out, cap, "usb %u.%03u: probe step %u %s (%u)", s, ms, e.a,
+                              e.b == 0 ? "ok" : "FAILED", e.b); break;
+    case EV_XI_MOUNT:  snprintf(out, cap, "usb %u.%03u: xinput type %u, pad %s", s, ms, e.a,
+                                e.b ? "connected" : "not yet"); break;
+    case EV_XI_UMOUNT: snprintf(out, cap, "usb %u.%03u: xinput gone", s, ms); break;
+    case EV_FIRST_INPUT: snprintf(out, cap, "usb %u.%03u: first input (%s)", s, ms,
+                                  e.a ? "switch pro" : "xinput"); break;
+    case EV_REPLUG:  snprintf(out, cap, "usb %u.%03u: watchdog replug (%s)", s, ms,
+                              e.a == 1 ? "enumeration failed" : "probe failed"); break;
+    default:         snprintf(out, cap, "usb %u.%03u: event %u", s, ms, e.kind); break;
+    }
+    return true;
+}
+
+// ============================================================================
 // 模仿 Windows：連上後要 0xEE 字串描述元，有回應就再要 Compat ID、BOS、Device Qualifier
 // （Specter 接收器在這組請求之下，手把開機後會切換成 XInput）
 // ============================================================================
@@ -65,21 +130,30 @@ static void pad_clear(void)
 static uint8_t ee_buf[64], ms_buf[40], bos_buf[16], qual_buf[10];
 static tusb_control_request_t ms_req;   // static：傳輸進行中這塊記憶體必須一直存在
 
-static void qual_done(tuh_xfer_t *x) { (void)x; }
+// 每一步的結果記進紀錄。BOS、Qualifier 被裝置拒絕（STALL）是正常的（USB 1.1 裝置沒有這些），
+// Windows 也一樣照問。真正算「失敗」的是 0xEE 這一步：傳輸逾時、根本沒回應（見 probe_failed）
+static volatile bool probe_failed;    // 這次連線的 Windows 式請求沒有成功送出
+
+static void qual_done(tuh_xfer_t *x) { ev_push(EV_PROBE, 4, x->result); }
 
 static void bos_done(tuh_xfer_t *x)
 {
+    ev_push(EV_PROBE, 3, x->result);
     tuh_descriptor_get(x->daddr, TUSB_DESC_DEVICE_QUALIFIER, 0, qual_buf, sizeof(qual_buf), qual_done, 0);
 }
 
 static void ms_done(tuh_xfer_t *x)
 {
+    ev_push(EV_PROBE, 2, x->result);
     tuh_descriptor_get(x->daddr, TUSB_DESC_BOS, 0, bos_buf, sizeof(bos_buf), bos_done, 0);
 }
 
 static void ee_done(tuh_xfer_t *xfer)
 {
     bool ok = xfer->result == XFER_RESULT_SUCCESS;
+    ev_push(EV_PROBE, 1, xfer->result);
+    // STALL = 裝置明確說「沒有這個」，也算有回應；FAILED／TIMEOUT 才是線路上沒溝通成功
+    if (xfer->result == XFER_RESULT_FAILED || xfer->result == XFER_RESULT_TIMEOUT) probe_failed = true;
     // 0xEE 字串的第 16 個 byte 是廠商代碼，Windows 用它再問一次「你相容哪種驅動」
     if (ok && ee_buf[0] >= 18 && ee_buf[1] == TUSB_DESC_STRING) {
         ms_req = (tusb_control_request_t){
@@ -246,15 +320,23 @@ usbh_class_driver_t const *usbh_app_driver_get_cb(uint8_t *driver_count)
     return &usbh_xinput_driver;
 }
 
+static volatile bool got_input;        // 這次連線收到過按鍵資料了沒（只記第一次）
+
 void tuh_mount_cb(uint8_t dev_addr)
 {
     uint16_t vid = 0, pid = 0;
     tuh_vid_pid_get(dev_addr, &vid, &pid);
+    probe_failed = false;
+    ev_push(EV_MOUNT, vid, pid);
     // 微軟、任天堂的裝置不需要；其他副廠接收器可能要看到 Windows 的請求才會切換
     if (vid != 0x045E && vid != 0x057E) windows_probe(dev_addr);
 }
 
-void tuh_umount_cb(uint8_t dev_addr) { (void)dev_addr; }
+void tuh_umount_cb(uint8_t dev_addr)
+{
+    got_input = false;
+    ev_push(EV_UMOUNT, dev_addr, 0);
+}
 
 // ---- HID：目前只處理 Switch Pro ----
 
@@ -283,6 +365,7 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t idx, uint8_t const *re
     if (len > 0 && sp_active && dev_addr == sp_dev) {
         if (report[0] == 0x81 || report[0] == 0x21) sp_got_reply = true;   // 握手／子指令的回應
         sp_parse(report, len);
+        if (pad.connected && !got_input) { got_input = true; ev_push(EV_FIRST_INPUT, 1, 0); }
     }
     tuh_hid_receive_report(dev_addr, idx);
 }
@@ -299,6 +382,7 @@ void tuh_xinput_mount_cb(uint8_t dev_addr, uint8_t instance, const xinputh_inter
         tuh_xinput_receive_report(dev_addr, instance);
         return;
     }
+    ev_push(EV_XI_MOUNT, itf->type, itf->connected);
     xi_dev = dev_addr; xi_inst = instance; xi_active = true;
     tuh_xinput_set_led(dev_addr, instance, 1, false);   // 1P 燈
     pad.connected = true;
@@ -308,6 +392,7 @@ void tuh_xinput_mount_cb(uint8_t dev_addr, uint8_t instance, const xinputh_inter
 void tuh_xinput_umount_cb(uint8_t dev_addr, uint8_t instance)
 {
     if (xi_active && dev_addr == xi_dev && instance == xi_inst) { xi_active = false; pad_clear(); }
+    ev_push(EV_XI_UMOUNT, 0, 0);
 }
 
 void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance,
@@ -322,8 +407,62 @@ void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance,
         pad.rx = p->sThumbRX;      pad.ry = p->sThumbRY;
         if (!xi_active) { xi_dev = dev_addr; xi_inst = instance; xi_active = true; }
         pad.connected = true;
+        if (!got_input) { got_input = true; ev_push(EV_FIRST_INPUT, 0, 0); }
     }
     tuh_xinput_receive_report(dev_addr, instance);
+}
+
+// ============================================================================
+// 看門狗：卡住時自動「拔插」
+// ============================================================================
+// 2026-10-24 實機：開機或手把休眠醒來後，有時要一直拔接收器、重開手把才連得上。
+// 原因之一在 TinyUSB：列舉時（問裝置是誰、設定位址）某個傳輸失敗，重試 3 次後就放棄，
+// 之後什麼都不做——線上明明有裝置，卻永遠不會再問它。手動拔插才會重新開始。
+// PIO-USB 是軟體解碼 USB 訊號，偶爾一個封包失敗並不稀奇（接收器剛切換身分時也比較不穩）。
+//
+// 做法：每 100 ms 檢查一次——
+//   1. 線上有裝置（D+／D- 不是兩條都低），但超過 3 秒沒有任何裝置列舉完成 → 模擬拔插
+//   2. 裝置列舉完成了，但 Windows 式請求沒送成功（接收器就不會切換成 XInput）→ 模擬拔插
+// 「模擬拔插」= 告訴 TinyUSB「裝置拔掉了」再「插上了」：它會送 USB 重設訊號、從頭列舉，
+// 和手動拔插一樣，只是接收器沒有斷電。
+// 每次拔插之後至少等 4 秒才會再做，避免一直重來；每次都記進紀錄檔。
+
+#define WD_ENUM_MS    3000   // 有裝置但沒列舉完成，等多久
+#define WD_GAP_MS     4000   // 兩次模擬拔插至少間隔多久
+
+// 有沒有任何裝置列舉完成（不自己數 mount／unmount：列舉到一半失敗的裝置也會觸發 unmount，數字會亂）
+static bool any_mounted(void)
+{
+    for (uint8_t addr = 1; addr <= CFG_TUH_DEVICE_MAX + CFG_TUH_HUB; ++addr)
+        if (tuh_mounted(addr)) return true;
+    return false;
+}
+
+static void watchdog_tick(uint32_t now)
+{
+    static uint32_t last_check, unmounted_since, last_replug;
+    if (now - last_check < 100) return;
+    last_check = now;
+
+    bool line = hcd_port_connect_status(BOARD_TUH_RHPORT);   // 線上有沒有裝置
+    bool mounted = any_mounted();
+    if (!line || mounted) unmounted_since = 0;
+    else if (unmounted_since == 0) unmounted_since = now ? now : 1;
+
+    uint8_t reason = 0;
+    if (unmounted_since && now - unmounted_since >= WD_ENUM_MS) reason = 1;
+    // 已經在收按鍵的手把就算請求失敗也不管（能玩就不要去動它）
+    else if (mounted && probe_failed && !got_input && !xi_active && !sp_active) reason = 2;
+    if (!reason) return;
+    if (last_replug && now - last_replug < WD_GAP_MS) return;
+
+    last_replug = now;
+    unmounted_since = 0;
+    probe_failed = false;
+    ev_push(EV_REPLUG, reason, 0);
+    // 在 tuh_task() 外面（同一個核心的主迴圈）送事件，所以 in_isr = false
+    hcd_event_device_remove(BOARD_TUH_RHPORT, false);
+    hcd_event_device_attach(BOARD_TUH_RHPORT, false);
 }
 
 // ============================================================================
@@ -371,6 +510,7 @@ static void core1_main(void)
         tuh_task();
         uint32_t now = to_ms_since_boot(get_absolute_time());
         sp_tick(now);
+        watchdog_tick(now);
 
         // 震動：有變化就送；Switch Pro 震動中要每 50 ms 再送一次，不然會自己停
         uint8_t s = want_strong, w = want_weak;

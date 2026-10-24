@@ -790,6 +790,12 @@ static void nova_main(void)
         combo_frames = ((held & combo) == combo) ? combo_frames + 1 : 0;
         if (combo_frames == 60) show_stats = !show_stats;
 
+        // USB 事件（手把插上、拔掉、看門狗）寫進紀錄檔：一幀最多 2 筆，不拖慢遊戲
+        if (sd_ready) {
+            char s[64];
+            for (int k = 0; k < 2 && usb_pad_next_log(s, sizeof s); ++k) sd_log(s);
+        }
+
         // 每 10 秒在紀錄檔寫一行：電腦上看得出主機還活著、跑得多快
         static uint32_t next_alive_ms = 10000;
         if (sd_ready && to_ms_since_boot(get_absolute_time()) >= next_alive_ms) {
