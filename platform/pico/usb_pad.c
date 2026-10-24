@@ -522,7 +522,9 @@ static void core1_main(void)
     ready = true;   // PIO-USB 已經登記了 DMA 通道 2
     // 這個核心的中斷都登記好了：把向量表設成唯讀（診斷，見 main.c 的 protect_vector_table）
     extern void protect_vector_table(void);
+    extern void protect_flash_regs(void);
     protect_vector_table();
+    protect_flash_regs();   // 這個核心從來不需要改 Flash 介面的設定
 
     uint8_t sent_s = 0, sent_w = 0;
     uint32_t last_send = 0;

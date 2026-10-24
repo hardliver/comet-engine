@@ -13,6 +13,7 @@
 #include "pico/stdlib.h"
 #include "pico/flash.h"
 #include "hardware/flash.h"
+#include "hardware/watchdog.h"
 #include "romflash.h"
 #include "video.h"
 
@@ -92,6 +93,7 @@ static void flash_op(int erase, size_t region_off, const uint8_t *data, size_t l
 
     if (erase) erases++;
     else pages_written++;
+    watchdog_update();   // 載入時開著硬體看門狗（main.c）：寫 Flash 有進展就「餵」它
     if (progress_fn) progress_fn();
 }
 

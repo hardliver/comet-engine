@@ -143,15 +143,36 @@ void protect_vector_table(void)
     // 0x20000000–0x200000FF（向量表前 64 格，含第 41 格）；AP = 11：所有人唯讀
     mpu_hw->rbar = 0x20000000u | (3u << M33_MPU_RBAR_AP_LSB);
     mpu_hw->rlar = 0x200000E0u | M33_MPU_RLAR_EN_BITS;
-    // 第 1 個區域：整個 Flash 視窗 0x10000000–0x13FFFFFF 設成唯讀（仍然可以執行程式）。
-    // 2026-10-24：當機時快取裡的程式碼被改掉、Flash 本身沒壞。RP2350 的 Flash 快取「可以寫」
-    // （為了外接 PSRAM 設計的）：程式寫到 Flash 的位址不會出錯，而是默默改掉快取裡的內容。
-    // 設成唯讀後，誰寫到這裡 CPU 當場出錯，當機紀錄的 PC 就是寫的那一行、MMFAR 是被寫的位址。
+    // 第 1、2 個區域：Flash 的各個位址視窗設成唯讀（仍然可以執行程式）：
+    //   0x10000000–0x17FFFFFF：有快取的視窗、不經快取的視窗
+    //   0x1C000000–0x1FFFFFFF：不經快取、不轉換位址的視窗
+    //   （中間 0x18000000 起是「快取維護」視窗，寫它是作廢快取，xip_patrol 要用，不擋）
+    // 2026-10-24 實機：當機時直接讀 Flash 全部讀到 CCCCCCCC——Flash 不回應了，快取裡的內容反而是對的。
+    // 寫到這些位址，Flash 介面會真的對 Flash 晶片送出「寫入」的指令，Flash 就會離開「一直讀」的模式，
+    // 之後的讀取全部失敗。設成唯讀：誰寫，CPU 當場出錯，當機紀錄的 PC 就是寫的那一行、MMFAR 是位址。
     // （正常的 Flash 寫入 flash_range_program 走另一條路，不受影響）
     mpu_hw->rnr = 1;
     mpu_hw->rbar = 0x10000000u | (3u << M33_MPU_RBAR_AP_LSB);
-    mpu_hw->rlar = 0x13FFFFE0u | M33_MPU_RLAR_EN_BITS;
+    mpu_hw->rlar = 0x17FFFFE0u | M33_MPU_RLAR_EN_BITS;
+    mpu_hw->rnr = 2;
+    mpu_hw->rbar = 0x1C000000u | (3u << M33_MPU_RBAR_AP_LSB);
+    mpu_hw->rlar = 0x1FFFFFE0u | M33_MPU_RLAR_EN_BITS;
     // PRIVDEFENA：其他沒設定的位址照原本的規則（不然整個記憶體都不能用）
+    mpu_hw->ctrl = M33_MPU_CTRL_PRIVDEFENA_BITS | M33_MPU_CTRL_ENABLE_BITS;
+    __dsb(); __isb();
+}
+
+// 第 3 個區域：Flash 介面的控制暫存器（XIP_CTRL 0x400C8000、QMI 0x400D0000）設成唯讀。
+// 只有寫 Flash（安裝、載入）的時候要改它們：USB 核心一開始就設；主核心等遊戲載入完才設。
+// 有程式亂寫到這裡（例如把 Flash 切到「直接模式」），Flash 就讀不到了，這樣可以當場抓到。
+void protect_flash_regs(void)
+{
+    mpu_hw->ctrl = 0;
+    __dsb(); __isb();
+    mpu_hw->rnr = 3;
+    // 屬性 1（mair 的第 2 個 byte = 0x00）：「裝置記憶體」，周邊暫存器要用這個
+    mpu_hw->rbar = 0x400C8000u | (3u << M33_MPU_RBAR_AP_LSB);
+    mpu_hw->rlar = 0x400D0FE0u | (1u << M33_MPU_RLAR_ATTRINDX_LSB) | M33_MPU_RLAR_EN_BITS;
     mpu_hw->ctrl = M33_MPU_CTRL_PRIVDEFENA_BITS | M33_MPU_CTRL_ENABLE_BITS;
     __dsb(); __isb();
 }
@@ -558,6 +579,9 @@ static int load_nvc(const char *path, char *info, size_t info_size, int *err)
 
     uint32_t t0 = time_us_32();
     int installed = romflash_installed(&id, &rom_root);
+    // 載入時也開硬體看門狗：2026-10-24 實機有幾次開機停在「engine_load start」不動，只能拔電。
+    // 每寫一次 Flash 會「餵」一次（romflash.c），沒寫 Flash 的載入不到 1 秒，8 秒很夠
+    watchdog_enable(8000, true);
     {
         char s[96];
         snprintf(s, sizeof s, "game.nvc: size %u, crc %08X, %s", (unsigned)id.size, (unsigned)id.crc,
@@ -745,8 +769,13 @@ static void nova_main(void)
     bool hung = crash.magic == HANG_MAGIC;
     bool crashed = crash.magic == CRASH_MAGIC || hung;
     // 硬體看門狗重開機（沒有當機紀錄）：主程式整個卡死、連畫面中斷都停了（黑畫面）的那種，見主迴圈
-    bool dog = !crashed && watchdog_enable_caused_reboot() && boot_phase == PHASE_PLAYING;
-    if (dog && sd_ready) sd_log("LAST BOOT: watchdog reset (froze while playing)");
+    bool dog = !crashed && watchdog_enable_caused_reboot();
+    if (dog && sd_ready) sd_log(boot_phase == PHASE_PLAYING ? "LAST BOOT: watchdog reset (froze while playing)"
+                                                            : "LAST BOOT: watchdog reset (froze while loading)");
+    // 載入時卡住、被看門狗重開：再試一次；連續兩次就先不載入（不然一直重開）
+    static uint32_t __uninitialized_ram(load_hangs);
+    if (dog && boot_phase == PHASE_LOADING) load_hangs++;
+    else load_hangs = 0;
     char crash_text[2][64];
     if (crashed) {
         crash.magic = 0;
@@ -775,13 +804,16 @@ static void nova_main(void)
 
     // 上次當機：如果是載入途中當的，這次先不載入 SD 卡的遊戲（不然一開機又當）。
     // 玩到一半當的就照常載入，回到標題畫面可以讀上次的存檔
-    bool crash_while_loading = crashed && crash.phase != PHASE_PLAYING;
+    bool crash_while_loading = (crashed && crash.phase != PHASE_PLAYING) || load_hangs >= 2;
+    if (load_hangs >= 2) { load_hangs = 0; platform_log("LOAD HUNG TWICE: SKIPPING GAME.NVC"); }
     if (crash_while_loading) sd_ok = 0;
     boot_phase = PHASE_LOADING;
     // game.nvc 失敗的原因先記下來：後面試 game.lua 時 sd_error() 會被蓋掉，
     // 只顯示「找不到 game.lua」就看不出 game.nvc 是哪裡出問題
     char nvc_why[64] = "";
-    if (sd_ok && load_nvc("game.nvc", cart_info, sizeof cart_info, &err) == 0) {
+    bool nvc_ok = sd_ok && load_nvc("game.nvc", cart_info, sizeof cart_info, &err) == 0;
+    watchdog_disable();   // load_nvc 裡開的看門狗先關掉：下面改載入 game.lua 可能要很久，主迴圈會再打開
+    if (nvc_ok) {
         // 已經載入
     } else {
         if (sd_ok) {
@@ -813,6 +845,7 @@ static void nova_main(void)
     uint32_t sum_frames = 0;
     hang_watch = true;
     boot_phase = PHASE_PLAYING;
+    if (sd_ready) protect_flash_regs();   // 開始玩之後不會再寫 Flash（romflash_lock）
     // 硬體看門狗：主迴圈每幀「餵」一次，超過 8 秒沒餵，晶片自己重開機。
     // 畫面中斷的卡住偵測（video.c）抓不到「連中斷都停了」的情況（黑畫面、什麼都沒反應），這個抓得到。
     // 載入時不開：載入要好幾秒、中間沒有地方餵。pause_on_debug：接除錯器暫停時不要重開
