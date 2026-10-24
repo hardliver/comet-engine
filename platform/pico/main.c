@@ -53,7 +53,8 @@
 #define CRASH_MAGIC 0x4E4F5641u   // "NOVA"
 typedef struct { uint32_t magic, pc, lr, cfsr, hfsr, bfar, r0, core, stack0, vtor, slot, ndiff, firstdiff, dma;
                  uint32_t r1, r2, r3, r12, phase, xip_bad;
-                 uint32_t bad_addr[3], bad_cache[3], bad_flash[3]; } CrashInfo;   // 前 3 個快取不一致的字
+                 uint32_t bad_addr[3], bad_cache[3], bad_flash[3];   // 前 3 個快取不一致的字
+                 char msg[48]; } CrashInfo;                          // panic 的訊息
 static uint32_t vt_snapshot[68];   // 開機登記完後的向量表（比對哪些格子被改）
 static CrashInfo __uninitialized_ram(crash);   // 重新開機（看門狗）後內容還在
 
@@ -61,6 +62,9 @@ static CrashInfo __uninitialized_ram(crash);   // 重新開機（看門狗）後
 // 玩到一半當機 → 照常載入（只是少了上次存檔之後的進度）；載入途中當機 → 先不載入（不然開機就又當）
 enum { PHASE_BOOT = 0, PHASE_LOADING = 0x4C4F4144u /* "LOAD" */, PHASE_PLAYING = 0x504C4159u /* "PLAY" */ };
 static uint32_t __uninitialized_ram(boot_phase);
+// 載入時走到哪一步（romflash.c 也會設）：看門狗重開後，下次開機寫進紀錄
+volatile uint32_t __uninitialized_ram(nova_where);
+volatile uint32_t __uninitialized_ram(nova_where_ops);   // 這次載入寫了幾次 Flash
 
 // Flash 讀取檢查（診斷）：XIP（直接從 Flash 執行程式）有快取。同一段 Flash 從「有快取」和「不經快取」
 // 兩個位址各讀一次，內容應該一模一樣；不一樣代表快取或 Flash 讀取出錯（2026-10-24：懷疑是當機原因）
@@ -88,7 +92,7 @@ static uint32_t __not_in_flash_func(xip_compare)(uint32_t addr)
 // 重新開機（當機、卡住之後）：用看門狗「立刻觸發」，整顆晶片（除了時脈振盪器）都重設。
 // 2026-10-24 實機：原本用 AIRCR 的 SYSRESETREQ（只重設 CPU 那一塊），當機後的那次開機
 // 每次都卡在載入、要等看門狗再重開一次才好——Flash 介面沒有被完整重設。RAM 的內容一樣會保留。
-static void __not_in_flash_func(nova_full_reset)(void)
+static void __attribute__((noreturn)) __not_in_flash_func(nova_full_reset)(void)
 {
     psm_hw->wdsel = PSM_WDSEL_BITS & ~(PSM_WDSEL_ROSC_BITS | PSM_WDSEL_XOSC_BITS);
     __asm volatile("dsb");
@@ -186,6 +190,26 @@ void protect_flash_regs(void)
     mpu_hw->rlar = 0x400D0FE0u | (1u << M33_MPU_RLAR_ATTRINDX_LSB) | M33_MPU_RLAR_EN_BITS;
     mpu_hw->ctrl = M33_MPU_CTRL_PRIVDEFENA_BITS | M33_MPU_CTRL_ENABLE_BITS;
     __dsb(); __isb();
+}
+
+// panic（SDK 或程式發現「不可能繼續」時呼叫，例如 "Out of memory"）：
+// 原本 SDK 會停在斷點，沒接除錯器就整台卡死。改成把訊息和「誰呼叫了 panic」記下來，再重新開機。
+// CMakeLists.txt 設定 PICO_PANIC_FUNCTION=nova_panic、DOES_NOT_RETURN=1：SDK 的 panic 直接跳到這裡，
+// 所以 lr（__builtin_return_address）就是呼叫 panic 的那個地方。
+#define PANIC_MAGIC 0x50414E43u   // "PANC"
+void __attribute__((noreturn)) __not_in_flash_func(nova_panic)(const char *fmt, ...)
+{
+    crash.lr = (uint32_t)__builtin_return_address(0);
+    crash.pc = 0;
+    crash.core = *(volatile uint32_t *)(SIO_BASE + 0x000);
+    crash.phase = boot_phase;
+    crash.xip_bad = 0;
+    // 只複製格式字串本身（不展開 %d 之類）：夠看出是哪一種錯
+    size_t i = 0;
+    if (fmt) for (; i + 1 < sizeof crash.msg && fmt[i]; ++i) crash.msg[i] = fmt[i];
+    crash.msg[i] = 0;
+    crash.magic = PANIC_MAGIC;
+    nova_full_reset();
 }
 
 // 主程式卡住（video.c 偵測到 5 秒沒有進到下一幀）：記下最後看到的位置，重新開機
@@ -642,7 +666,9 @@ static int load_nvc(const char *path, char *info, size_t info_size, int *err)
     luarom_set_append(romflash_append);
     script_set_loader(rom_loader, NULL);
     platform_log("engine_load start");
+    nova_where = 20;   // 遊戲的 Lua 開始跑（載入）
     *err = engine_load(head, head_len);   // 開頭原始碼：引擎只用來讀遊戲 id
+    nova_where = 30;   // 載入完
     romflash_set_progress(NULL);
     {
         char s[96];
@@ -787,11 +813,18 @@ static void nova_main(void)
     size_t sd_len = 0;
     // 上次當機了：顯示紀錄，這次不載入 game.nvc
     bool hung = crash.magic == HANG_MAGIC;
-    bool crashed = crash.magic == CRASH_MAGIC || hung;
+    bool panicked = crash.magic == PANIC_MAGIC;
+    bool crashed = crash.magic == CRASH_MAGIC || hung || panicked;
     // 硬體看門狗重開機（沒有當機紀錄）：主程式整個卡死、連畫面中斷都停了（黑畫面）的那種，見主迴圈
     bool dog = !crashed && watchdog_enable_caused_reboot();
-    if (dog && sd_ready) sd_log(boot_phase == PHASE_PLAYING ? "LAST BOOT: watchdog reset (froze while playing)"
-                                                            : "LAST BOOT: watchdog reset (froze while loading)");
+    if (dog && sd_ready) {
+        char s[96];
+        snprintf(s, sizeof s, "LAST BOOT: watchdog reset (froze while %s), step %u, flash ops %u",
+                 boot_phase == PHASE_PLAYING ? "playing" : "loading", (unsigned)nova_where, (unsigned)nova_where_ops);
+        sd_log(s);
+    }
+    nova_where = 0;
+    nova_where_ops = 0;
     // 載入時卡住、被看門狗重開：再試一次；連續兩次就先不載入（不然一直重開）
     static uint32_t __uninitialized_ram(load_hangs);
     if (dog && boot_phase == PHASE_LOADING) load_hangs++;
@@ -799,8 +832,14 @@ static void nova_main(void)
     char crash_text[2][64];
     if (crashed) {
         crash.magic = 0;
-        snprintf(crash_text[0], 64, "%s PC %08X LR %08X", hung ? "HANG" : "CRASH",
+        snprintf(crash_text[0], 64, "%s PC %08X LR %08X", hung ? "HANG" : panicked ? "PANIC" : "CRASH",
                  (unsigned)crash.pc, (unsigned)crash.lr);
+        if (panicked) {
+            char t[96];
+            snprintf(t, sizeof t, "PANIC \"%s\" from %08X core %u", crash.msg, (unsigned)crash.lr,
+                     (unsigned)crash.core);
+            platform_log(t);
+        }
         snprintf(crash_text[1], 64, "CORE %u R0 %d CFSR %08X MMFAR %08X",
                  (unsigned)crash.core, (int)crash.r0, (unsigned)crash.cfsr, (unsigned)crash.bfar);
         platform_log(crash_text[0]);

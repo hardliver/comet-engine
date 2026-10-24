@@ -5,6 +5,7 @@
 
 #include "map.h"
 #include "gfx.h"
+#include "script.h"   // script_malloc：記憶體不夠時先叫 Lua 回收
 
 typedef struct {
     char name[LAYER_NAME_MAX];
@@ -147,7 +148,7 @@ int map_set(int m, const char *name, int cx, int cy, int tile)
     if (layer->in_rom) {
         // 第一次改這個圖層：複製一份到 RAM，之後改 RAM 那份
         size_t n = (size_t)map->w * (size_t)map->h;
-        uint16_t *copy = malloc(n * sizeof(uint16_t));
+        uint16_t *copy = script_malloc(n * sizeof(uint16_t));
         if (copy == NULL) return -3;   // 記憶體不夠，這次的修改做不到
         memcpy(copy, layer->cells, n * sizeof(uint16_t));
         layer->cells = copy;

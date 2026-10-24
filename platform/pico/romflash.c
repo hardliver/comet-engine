@@ -75,17 +75,25 @@ static void do_flash_op(void *p)
 }
 
 // region_off：整個唯讀區內的位移（0 = 安裝紀錄）。erase = 1 時 len 是擦除的大小
+// 診斷（main.c）：寫 Flash 走到哪一步。載入時卡住被看門狗重開，下次開機可以看出卡在哪
+extern volatile uint32_t nova_where, nova_where_ops;
+
 static void flash_op(int erase, size_t region_off, const uint8_t *data, size_t len)
 {
     FlashOp op = { erase, (uint32_t)(ROMFLASH_OFFSET + region_off), data, len };
     uint32_t t0 = time_us_32();
+    nova_where_ops++;
+    nova_where = 101;   // 停畫面
     bool was_running = video_running();
     if (was_running) video_stop();
     uint32_t t1 = time_us_32();
+    nova_where = 102;   // 寫 Flash（要先讓 USB 核心暫停）
     // 等另一個核心最多 1 秒；等不到（或其他錯誤）就記成 FE
     int r = flash_safe_execute(do_flash_op, &op, 1000);
     uint32_t t2 = time_us_32();
+    nova_where = 103;   // 重新開畫面
     if (was_running) video_restart();
+    nova_where = 104;   // 寫完一次
     t_lock += t1 - t0;
     t_op += t2 - t1;
     t_unlock += time_us_32() - t2;

@@ -5,6 +5,7 @@
 #include <string.h>   // memcpy
 
 #include "gfx.h"
+#include "script.h"   // script_malloc：記憶體不夠時先叫 Lua 回收
 
 // 畫面：每個像素 1 byte，存的是顏色編號（0–255）
 // static：只有這個檔案能直接碰它，別人只能透過函式
@@ -82,7 +83,7 @@ static const uint8_t *keep_copy(const uint8_t *data, size_t len, int *in_rom)
         const uint8_t *p = rom_store(data, len);
         if (p != NULL) { *in_rom = 1; return p; }
     }
-    uint8_t *copy = malloc(len);
+    uint8_t *copy = script_malloc(len);
     if (copy == NULL) return NULL;
     memcpy(copy, data, len);
     *in_rom = 0;

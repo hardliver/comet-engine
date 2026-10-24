@@ -61,4 +61,10 @@ void script_profile(int on);
 typedef void (*ScriptWatch)(const char *where);
 void script_set_watch(ScriptWatch fn, unsigned every_instr);
 
+// 給 C 這邊要「一大塊」記憶體的地方用（地圖圖層的複本、圖片）：malloc 失敗時，
+// 先叫 Lua 做一次完整的垃圾回收、把不用的記憶體還回來，再試一次。還是不夠才回傳 NULL。
+// 主機只有約 230 KB 可用，Lua 的垃圾常常占一大塊；不先回收，C 這邊就會「明明夠卻要不到」。
+// 只能在「Lua 呼叫進來的 C 函式」裡用（那時候回收是安全的）。
+void *script_malloc(size_t n);
+
 #endif

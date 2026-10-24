@@ -58,7 +58,13 @@ target_compile_definitions(nova PRIVATE
     COMET_GC_PAUSE=110                   # RAM 少：記憶體長到 1.1 倍就回收垃圾（Lua 預設 2 倍）。
                                          # 2026-10-24 Wildkin 量測（32 位元）：120 → 110 最高用量少約 20 KB，速度幾乎不變；100 會慢 3 倍
     COMET_EVAL_MAX=256                   # 主機沒有 Studio 除錯，結果緩衝不用 16 KB
-    SYSTEM_MAX_GAMES=16)                 # 主選單之後做；先不用放 64 款遊戲的清單
+    SYSTEM_MAX_GAMES=16                  # 主選單之後做；先不用放 64 款遊戲的清單
+    # malloc 失敗時不要整台停機（SDK 預設 panic）：回傳 NULL，引擎自己處理（先叫 Lua 回收再試）。
+    # 2026-10-24 實機：戰鬥中主核心 panic，懷疑就是 C 這邊要記憶體要不到
+    PICO_MALLOC_PANIC=0
+    # panic 時改呼叫 main.c 的 nova_panic：把訊息、是誰呼叫的記進當機紀錄（不然什麼都看不到）
+    PICO_PANIC_FUNCTION=nova_panic
+    PICO_PANIC_FUNCTION_DOES_NOT_RETURN=1)
 
 target_compile_options(nova PRIVATE -Wall -Wextra)
 

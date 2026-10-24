@@ -5,6 +5,7 @@
 //   Lua → 引擎：遊戲呼叫 cls、rect、btn 等，實際執行的是這裡的 C 函式
 
 #include <stdio.h>    // snprintf
+#include <stdlib.h>   // malloc（script_malloc）
 #include <string.h>
 
 #include "lua.h"
@@ -25,6 +26,16 @@
 #include "system.h"
 
 static lua_State *L = NULL;   // 目前這款遊戲的 Lua 執行環境
+
+void *script_malloc(size_t n)
+{
+    void *p = malloc(n);
+    if (p == NULL && L != NULL) {
+        lua_gc(L, LUA_GCCOLLECT);   // 完整回收一次（可能要幾十毫秒，只有記憶體不夠時才會發生）
+        p = malloc(n);
+    }
+    return p;
+}
 static int failed = 0;
 
 // ============================================================
