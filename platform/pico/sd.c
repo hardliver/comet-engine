@@ -253,3 +253,53 @@ int sd_read_file(const char *path, char **data, size_t *len)
     *len = (size_t)size;
     return 0;
 }
+
+// ============================================================================
+// 存檔：SD 卡的 saves 資料夾，一個欄位一個檔案
+// ============================================================================
+// 檔名和 Mac 版一樣：遊戲 id 的 / 換成 _，例如 saves/hardliver_wildkin.1.sav
+// （把 SD 卡插到電腦，可以直接複製給 Mac 版用，反過來也可以）
+
+static void save_path(char *out, size_t size, const char *game_id, int slot, const char *ext)
+{
+    char id[64];
+    snprintf(id, sizeof id, "%s", game_id);
+    for (char *c = id; *c; c++) {
+        if (*c == '/' || *c == '\\' || *c == ':') *c = '_';   // 這些字元不能出現在檔名裡
+    }
+    snprintf(out, size, "saves/%s.%d.%s", id, slot, ext);
+}
+
+int sd_save_read(const char *game_id, int slot, unsigned char *buf, int cap)
+{
+    char path[96];
+    save_path(path, sizeof path, game_id, slot, "sav");
+    FIL f;
+    if (f_open(&f, path, FA_READ) != FR_OK) return -1;   // 沒有存檔
+    UINT got = 0;
+    FRESULT fr = f_read(&f, buf, (UINT)cap, &got);
+    f_close(&f);
+    return fr == FR_OK ? (int)got : -1;
+}
+
+int sd_save_write(const char *game_id, int slot, const unsigned char *data, int len)
+{
+    char path[96], tmp[96];
+    save_path(path, sizeof path, game_id, slot, "sav");
+    if (data == NULL) {                       // 刪除這個欄位
+        FRESULT fr = f_unlink(path);
+        return (fr == FR_OK || fr == FR_NO_FILE) ? 0 : 1;
+    }
+    f_mkdir("saves");                         // 已經有了會回傳錯誤，不用管
+    // 先寫到暫存檔、確定寫進卡片（f_sync），再換掉舊的：寫到一半斷電，舊的存檔還在
+    save_path(tmp, sizeof tmp, game_id, slot, "tmp");
+    FIL f;
+    if (f_open(&f, tmp, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return 1;
+    UINT put = 0;
+    FRESULT fr = f_write(&f, data, (UINT)len, &put);
+    if (fr == FR_OK) fr = f_sync(&f);
+    f_close(&f);
+    if (fr != FR_OK || put != (UINT)len) return 1;
+    f_unlink(path);                           // FatFs 的改名不能蓋掉已經存在的檔案，所以先刪舊的
+    return f_rename(tmp, path) == FR_OK ? 0 : 1;
+}

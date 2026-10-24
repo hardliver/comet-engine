@@ -29,6 +29,11 @@ int sd_fingerprint(const char *path, uint32_t *size, uint32_t *stamp, uint32_t *
 void sd_log(const char *line);
 extern uint32_t sd_read_us;   // 診斷用
 
+// 存檔（main.c 的 platform_save_read／write 用）：saves/遊戲id.欄位.sav
+// 讀：回傳長度，沒有存檔回傳 -1。寫：data 是 NULL 代表刪除；成功回傳 0
+int sd_save_read(const char *game_id, int slot, unsigned char *buf, int cap);
+int sd_save_write(const char *game_id, int slot, const unsigned char *data, int len);
+
 // 最後一次錯誤的說明（給畫面顯示）
 const char *sd_error(void);
 

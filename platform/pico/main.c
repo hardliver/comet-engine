@@ -198,17 +198,23 @@ void platform_log(const char *msg)
     }
 }
 
-// 存檔：還沒做（之後放 SD 卡）。讀取回報「沒有存檔」，寫入回報失敗
+// 存檔：放在 SD 卡的 saves 資料夾（sd.c）。沒有 SD 卡就讀不到、也存不了
 int platform_save_read(const char *game_id, int slot, unsigned char *buf, int cap)
 {
-    (void)game_id; (void)slot; (void)buf; (void)cap;
-    return -1;
+    if (!sd_ready) return -1;
+    return sd_save_read(game_id, slot, buf, cap);
 }
 
 int platform_save_write(const char *game_id, int slot, const unsigned char *data, int len)
 {
-    (void)game_id; (void)slot; (void)data; (void)len;
-    return 1;
+    if (!sd_ready) return 1;
+    uint32_t t0 = time_us_32();
+    int r = sd_save_write(game_id, slot, data, len);
+    char s[96];
+    snprintf(s, sizeof s, "save slot %d: %d bytes, %s, %u ms", slot, len, r == 0 ? "ok" : "FAILED",
+             (unsigned)((time_us_32() - t0) / 1000));
+    sd_log(s);
+    return r;
 }
 
 // 現實時鐘：還沒有（之後用 WiFi 對時）
