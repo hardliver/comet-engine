@@ -68,4 +68,7 @@ target_link_libraries(nova
     tinyusb_host tinyusb_board tinyusb_pico_pio_usb
     no-OS-FatFS-SD-SDIO-SPI-RPi-Pico)
 
+# 最常執行的程式放進 RAM（說明見 ld/default_text_excludes.incl）
+pico_add_linker_script_override_path(nova ${CMAKE_CURRENT_LIST_DIR}/ld GLOB_FILES)
+
 pico_add_extra_outputs(nova)

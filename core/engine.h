@@ -62,4 +62,12 @@ void engine_frame(void);
 // 目前是第幾幀（從 0 開始）。遊戲要計時就用它，不用系統時間
 uint32_t engine_frame_count(void);
 
+// 跑一幀但不呼叫 _draw（畫面維持上一張）。主機畫不完一幀時用來追上進度：
+// 遊戲邏輯仍是每秒 60 次。注意：_draw 裡如果改了遊戲狀態，跳過時就不會改（遊戲狀態應該只在 _update 改）
+void engine_frame_nodraw(void);
+
+// 量時間（主機調效能用）：fn 回傳「現在幾微秒」；之後每幀記下 _update、_draw、聲音各花多久
+void engine_set_timer(uint32_t (*fn)(void));
+void engine_last_times(uint32_t *update_us, uint32_t *draw_us, uint32_t *audio_us);
+
 #endif

@@ -295,6 +295,49 @@ void gfx_sspr(int img, int sx, int sy, int sw, int sh,
     dx -= cam_x;
     dy -= cam_y;
 
+    // 快速路徑：沒有放大縮小（sw == dw、sh == dh）。地圖格子、角色幾乎都是這種。
+    // 一般路徑每個點都要做除法（x * sw / dw）和好幾個範圍檢查；這裡先把「要畫的範圍」一次算好，
+    // 迴圈裡只剩「讀一個點、不透明就寫」。2026-10-24 Nova 主機實測：Wildkin 地圖畫面一幀 38 ms，
+    // 幾乎全花在這裡（一幀約 25 萬個點）。結果和一般路徑逐像素相同
+    if (sw == dw && sh == dh) {
+        // 畫面上 x 的範圍 [x0, x1)：要在畫面內，也要對到圖片內
+        int x0 = 0, x1 = dw;
+        if (dx + x0 < 0) x0 = -dx;
+        if (dx + x1 > SCREEN_W) x1 = SCREEN_W - dx;
+        // 圖片的第幾行 ix：不翻轉時 ix = sx + x；左右翻轉時 ix = sx + sw - 1 - x
+        if (!flip_x) {
+            if (sx + x0 < 0) x0 = -sx;
+            if (sx + x1 > im->w) x1 = im->w - sx;
+        } else {
+            if (sx + sw - 1 - x0 >= im->w) x0 = sx + sw - im->w;
+            if (sx + sw - x1 < 0) x1 = sx + sw;
+        }
+        for (int y = 0; y < dh; y++) {
+            int py = dy + y;
+            if (py < 0 || py >= SCREEN_H) continue;
+            int ty = flip_y ? sh - 1 - y : y;
+            int iy = sy + ty;
+            if (iy < 0 || iy >= im->h) continue;
+            gfx_pixels_drawn += (uint32_t)dw;   // 和一般路徑算法相同（運算預算要一致）
+            if (x1 <= x0) continue;
+            const uint8_t *src = &im->pixels[iy * im->w];
+            uint8_t *dst = &framebuffer[py * SCREEN_W + dx];
+            if (!flip_x) {
+                for (int x = x0; x < x1; x++) {
+                    uint8_t c = src[sx + x];
+                    if (c != 0) dst[x] = dmap[c];
+                }
+            } else {
+                int base = sx + sw - 1;
+                for (int x = x0; x < x1; x++) {
+                    uint8_t c = src[base - x];
+                    if (c != 0) dst[x] = dmap[c];
+                }
+            }
+        }
+        return;
+    }
+
     // 逐一走過「畫面上」要畫的每個點，反推它對應圖片的哪個像素。
     // 這樣放大、縮小都是同一套算法（最近鄰取樣，像素保持方塊狀）
     for (int y = 0; y < dh; y++) {

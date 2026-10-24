@@ -121,7 +121,24 @@ uint32_t engine_prof_load(void)
     return (uint32_t)(cyc * 1000 / L1_CYCLES_PER_FRAME);
 }
 
-void engine_frame(void)
+// 量時間（主機調效能用）：平台給一個「現在幾微秒」的函式，就記下 _update、_draw、聲音各花多久。
+// core 不碰硬體，所以時間由平台提供；沒設定就不量
+static uint32_t (*timer_us)(void);
+static uint32_t t_update, t_draw, t_audio;
+void engine_set_timer(uint32_t (*fn)(void)) { timer_us = fn; }
+void engine_last_times(uint32_t *update_us, uint32_t *draw_us, uint32_t *audio_us)
+{
+    *update_us = t_update; *draw_us = t_draw; *audio_us = t_audio;
+}
+
+// 跑一幀；draw = 0 時不呼叫 _draw（「跳過畫面」：主機畫不完時，遊戲邏輯照樣每秒 60 次，
+// 移動速度和網頁版一樣，只是畫面張數少一點）。其他步驟（輸入、重播、聲音、幀數）都照常
+static void frame(int draw);
+
+void engine_frame(void) { frame(1); }
+void engine_frame_nodraw(void) { frame(0); }
+
+static void frame(int draw)
 {
     // 運算預算：從這裡開始算這一幀（幀和幀之間的除錯指令不算）
     script_instr = 0;
@@ -137,10 +154,17 @@ void engine_frame(void)
     if (script_failed()) {
         gfx_cls(8);   // 遊戲出錯：整個畫面變紅，錯誤訊息看平台的輸出
     } else {
+        uint32_t t0 = timer_us ? timer_us() : 0;
         script_call("_update");   // 先更新狀態
-        script_call("_draw");     // 再畫出來
+        uint32_t t1 = timer_us ? timer_us() : 0;
+        if (draw) script_call("_draw");     // 再畫出來
+        uint32_t t2 = timer_us ? timer_us() : 0;
+        t_update = t1 - t0;
+        if (draw) t_draw = t2 - t1;
     }
+    uint32_t ta = timer_us ? timer_us() : 0;
     audio_frame(frame_count);     // 這一幀的聲音（遊戲剛剛叫的 sfx、music 從這一幀開始響）
+    if (timer_us) t_audio = timer_us() - ta;
     frame_count++;
     last_instr = script_instr;
     last_pixels = gfx_pixels_drawn;

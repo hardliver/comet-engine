@@ -1,0 +1,7 @@
+/* Nova：這些檔案的程式不放 Flash，開機時複製到 RAM 執行（SDK 的 .data 段會收走被排除的 .text）。
+   為什麼：Wildkin 的 Lua 程式、資料都在 Flash 上，CPU 的 Flash 快取（16 KB）常常被擠掉；
+   Lua 直譯器本身（lvm 等）也在 Flash 的話，每跑一個指令都可能要等 Flash。
+   放進 RAM 的是最常執行的部分（約 38 KB）：Lua 直譯器主迴圈、表格查找、函式呼叫、metamethod、
+   引擎的繪圖、地圖。
+   原本 SDK 的內容是 *(EXCLUDE_FILE(*libgcc.a: *libm.a:) .text*)，只多加了後面幾個檔案 */
+*(EXCLUDE_FILE(*libgcc.a: *libm.a: *lvm.c.o *ltable.c.o *ldo.c.o *ltm.c.o *gfx.c.o *map.c.o) .text*)

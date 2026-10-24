@@ -703,8 +703,14 @@ static void nova_main(void)
     uint32_t frame_us = 0;
 
     platform_log("main loop start");
+    uint64_t sum_update = 0, sum_draw = 0, sum_audio = 0;
+    uint32_t logic_vb = 0, skipped_total = 0, skipped_last = 0;
+    uint32_t sum_frames = 0;
     hang_watch = true;
-    script_set_watch(frame_watch, 200000);   // 每 20 萬個 Lua 指令檢查一次
+    // （Lua 看門狗 script_set_watch 關掉：它讓 Lua 每 100 個指令就呼叫一次 C，會拖慢遊戲；
+    //   卡住偵測改由畫面中斷負責，見 video.c）
+    (void)frame_watch;
+    engine_set_timer(time_us_32);   // 量 _update、_draw、聲音各花多久
     unsigned loops = 0;
     while (true) {
         if (loops < 5) {   // 診斷：前幾幀有沒有跑、花多久
@@ -747,12 +753,25 @@ static void nova_main(void)
             overlay_text(4, SCREEN_H - 22, cart_info);
         }
 
-        // 3. 讀手把，跑一幀遊戲（_update、_draw）。超過 16.6 ms 的話會晚一個空白期，遊戲變慢但不出錯
+        // 3. 讀手把，跑一幀遊戲（_update、_draw）。
+        // 畫一幀超過 16.6 ms 時，上一輪會錯過幾個空白期。錯過幾個，就先「只更新不畫」補幾次（最多 3 次），
+        // 遊戲邏輯維持每秒 60 次：移動速度和網頁版一樣，只是畫面張數少一點（像早期遊戲機的「跳格」）
+        uint32_t now_vb = video_frame_count();
+        int32_t behind = (int32_t)(now_vb - logic_vb) - 1;   // 上一次跑遊戲之後，多過了幾個空白期
+        if (logic_vb == 0 || behind < 0) behind = 0;            // （用有號數：剛好同一個空白期時是 -1）
+        if (behind > 3) behind = 3;                // 落後太多就算了（例如載入時），不要一次補一大堆
+        logic_vb = now_vb;
         read_input();
         uint32_t t0 = time_us_32();
         frame_start_us = t0;
+        for (int32_t k = 0; k < behind; ++k) { engine_frame_nodraw(); skipped_total++; }
         engine_frame();
         frame_us = time_us_32() - t0;
+        {   // 累計這 10 秒內各部分花的時間（紀錄檔的 alive 那一行）
+            uint32_t u, d, a;
+            engine_last_times(&u, &d, &a);
+            sum_update += u; sum_draw += d; sum_audio += a; sum_frames++;
+        }
         if (frame_us > 500000u && sd_ready) {
             char s[96];
             snprintf(s, sizeof s, "long frame done: %u ms, heap %uK, lua %uK", (unsigned)(frame_us / 1000),
@@ -770,12 +789,18 @@ static void nova_main(void)
         if (sd_ready && to_ms_since_boot(get_absolute_time()) >= next_alive_ms) {
             next_alive_ms += 10000;
             char s[160];
-            snprintf(s, sizeof s, "alive: frame %u, irq %u, slot41 %08X, flash wr %u, stack %u/%u, %u.%u ms/frame, heap %uK, lua %uK%s",
-                     (unsigned)last, (unsigned)video_irq_count, (unsigned)((uint32_t *)scb_hw->vtor)[41],
-                     romflash_pages_written(), main_stack_free(), usb_pad_stack_free(),
-                     (unsigned)(frame_us / 1000), (unsigned)(frame_us % 1000 / 100),
+            unsigned nf = sum_frames ? sum_frames : 1;
+            snprintf(s, sizeof s, "alive: %u fps drawn + %u skipped, avg ms: update %u.%u draw %u.%u audio %u.%u, stack %u/%u, heap %uK, lua %uK%s",
+                     (unsigned)(sum_frames / 10), (unsigned)((skipped_total - skipped_last) / 10),
+                     (unsigned)(sum_update / nf / 1000), (unsigned)(sum_update / nf % 1000 / 100),
+                     (unsigned)(sum_draw / nf / 1000), (unsigned)(sum_draw / nf % 1000 / 100),
+                     (unsigned)(sum_audio / nf / 1000), (unsigned)(sum_audio / nf % 1000 / 100),
+                     main_stack_free(), usb_pad_stack_free(),
                      heap_used() / 1024, (unsigned)(script_mem() / 1024), script_failed() ? ", LUA ERROR" : "");
             sd_log(s);
+            sum_update = sum_draw = sum_audio = 0;
+            sum_frames = 0;
+            skipped_last = skipped_total;
         }
     }
 }
