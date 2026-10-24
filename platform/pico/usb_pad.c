@@ -19,8 +19,9 @@
 #include "pico/flash.h"
 #include "hardware/structs/scb.h"
 #include "tusb.h"
-#include "host/hcd.h"      // hcd_port_connect_status、hcd_event_device_*（看門狗模擬拔插用）
+#include "host/hcd.h"      // hcd_event_device_*（看門狗模擬拔插用）
 #include "pio_usb.h"
+#include "pio_usb_ll.h"       // PIO_USB_ROOT_PORT：PIO-USB 自己記的「線上有沒有裝置」
 #include "xinput_host.h"
 #include "usb_pad.h"
 
@@ -80,6 +81,8 @@ enum {
     EV_XI_UMOUNT,
     EV_FIRST_INPUT,    // 這次連線收到的第一筆按鍵資料（a = 0 XInput、1 Switch Pro）
     EV_REPLUG,         // 看門狗「模擬拔插」（a = 原因：1 列舉失敗、2 Windows 請求失敗）
+    EV_ATTACH,         // 線上偵測到裝置插上（還沒列舉）
+    EV_DETACH,         // 線上偵測到裝置拔掉
 };
 
 #define EV_N 32        // 佇列長度（2 的次方：索引用 & (EV_N-1) 繞回）
@@ -88,13 +91,24 @@ static volatile uint32_t ev_head, ev_tail;   // head：下一筆寫哪裡（核�
 
 static void ev_push(uint8_t kind, uint16_t a, uint16_t b)
 {
+    // 這個核心的中斷（PIO-USB 偵測插拔）也會呼叫：先關中斷，不然兩邊同時拿到同一個 head
+    uint32_t irq = save_and_disable_interrupts();
     uint32_t h = ev_head;
-    if (h - ev_tail >= EV_N) return;          // 滿了
+    if (h - ev_tail >= EV_N) { restore_interrupts(irq); return; }   // 滿了
     UsbEvent *e = &ev_buf[h & (EV_N - 1)];
     e->ms = to_ms_since_boot(get_absolute_time());
     e->kind = kind; e->a = a; e->b = b;
     __dmb();                                   // 確定內容先寫好，另一個核心才看到 head 變了
     ev_head = h + 1;
+    restore_interrupts(irq);
+}
+
+// TinyUSB 每收到一個事件就呼叫（可能在中斷裡）：只記插上／拔掉
+void tuh_event_hook_cb(uint8_t rhport, uint32_t eventid, bool in_isr)
+{
+    (void)rhport; (void)in_isr;
+    if (eventid == HCD_EVENT_DEVICE_ATTACH) ev_push(EV_ATTACH, 0, 0);
+    else if (eventid == HCD_EVENT_DEVICE_REMOVE) ev_push(EV_DETACH, 0, 0);
 }
 
 bool usb_pad_next_log(char *out, int cap)
@@ -108,8 +122,11 @@ bool usb_pad_next_log(char *out, int cap)
     switch (e.kind) {
     case EV_MOUNT:   snprintf(out, cap, "usb %u.%03u: mount %04X:%04X", s, ms, e.a, e.b); break;
     case EV_UMOUNT:  snprintf(out, cap, "usb %u.%03u: unmount addr %u", s, ms, e.a); break;
-    case EV_PROBE:   snprintf(out, cap, "usb %u.%03u: probe step %u %s (%u)", s, ms, e.a,
-                              e.b == 0 ? "ok" : "FAILED", e.b); break;
+    case EV_PROBE:   snprintf(out, cap, "usb %u.%03u: probe step %u %s", s, ms, e.a,
+                              e.b == XFER_RESULT_SUCCESS ? "ok" : e.b == XFER_RESULT_STALLED ? "stall (normal)" :
+                              e.b == XFER_RESULT_TIMEOUT ? "TIMEOUT" : "FAILED"); break;
+    case EV_ATTACH:  snprintf(out, cap, "usb %u.%03u: line: device attached", s, ms); break;
+    case EV_DETACH:  snprintf(out, cap, "usb %u.%03u: line: device removed", s, ms); break;
     case EV_XI_MOUNT:  snprintf(out, cap, "usb %u.%03u: xinput type %u, pad %s", s, ms, e.a,
                                 e.b ? "connected" : "not yet"); break;
     case EV_XI_UMOUNT: snprintf(out, cap, "usb %u.%03u: xinput gone", s, ms); break;
@@ -444,7 +461,10 @@ static void watchdog_tick(uint32_t now)
     if (now - last_check < 100) return;
     last_check = now;
 
-    bool line = hcd_port_connect_status(BOARD_TUH_RHPORT);   // 線上有沒有裝置
+    // 線上有沒有裝置：讀 PIO-USB 自己記的旗標。
+    // 不用 hcd_port_connect_status：它為了 RP2350 Erratum E9 會短暫關掉 D+/D- 的輸入，
+    // 剛好 PIO-USB 的中斷在收封包就會收壞（2026-10-24 改掉）
+    bool line = PIO_USB_ROOT_PORT(0)->connected;
     bool mounted = any_mounted();
     if (!line || mounted) unmounted_since = 0;
     else if (unmounted_since == 0) unmounted_since = now ? now : 1;

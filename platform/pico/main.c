@@ -35,6 +35,7 @@
 #include "hardware/structs/hstx_ctrl.h"
 #include "hardware/sync.h"
 #include "hardware/structs/scb.h"
+#include "hardware/structs/qmi.h"   // Flash 介面的時序設定（診斷用，寫進紀錄）
 
 // ============================================================================
 // 當機紀錄（除錯用）
@@ -46,9 +47,32 @@
 // PC 是當機那一行程式的位址，用 arm-none-eabi-addr2line 可以查出是哪個函式。
 
 #define CRASH_MAGIC 0x4E4F5641u   // "NOVA"
-typedef struct { uint32_t magic, pc, lr, cfsr, hfsr, bfar, r0, core, stack0, vtor, slot, ndiff, firstdiff, dma; } CrashInfo;
+typedef struct { uint32_t magic, pc, lr, cfsr, hfsr, bfar, r0, core, stack0, vtor, slot, ndiff, firstdiff, dma;
+                 uint32_t r1, r2, r3, r12, phase, xip_bad; } CrashInfo;
 static uint32_t vt_snapshot[68];   // 開機登記完後的向量表（比對哪些格子被改）
 static CrashInfo __uninitialized_ram(crash);   // 重新開機（看門狗）後內容還在
+
+// 現在在做什麼（也放在不會清掉的 RAM）：當機時記下來，下次開機決定要不要照常載入遊戲。
+// 玩到一半當機 → 照常載入（只是少了上次存檔之後的進度）；載入途中當機 → 先不載入（不然開機就又當）
+enum { PHASE_BOOT = 0, PHASE_LOADING = 0x4C4F4144u /* "LOAD" */, PHASE_PLAYING = 0x504C4159u /* "PLAY" */ };
+static uint32_t __uninitialized_ram(boot_phase);
+
+// Flash 讀取檢查（診斷）：XIP（直接從 Flash 執行程式）有快取。同一段 Flash 從「有快取」和「不經快取」
+// 兩個位址各讀一次，內容應該一模一樣；不一樣代表快取或 Flash 讀取出錯（2026-10-24：懷疑是當機原因）
+static uint32_t __not_in_flash_func(xip_compare)(uint32_t addr)
+{
+    if (addr < 0x10000000u || addr >= 0x10400000u) return 0;   // 不是 Flash 上的位址
+    addr &= ~3u;
+    uint32_t bad = 0;
+    for (int i = -32; i < 32; ++i) {
+        uint32_t a = addr + (uint32_t)(i * 4);
+        if (a < 0x10000000u) continue;
+        uint32_t cached = *(volatile uint32_t *)a;
+        uint32_t direct = *(volatile uint32_t *)(a - 0x10000000u + 0x14000000u);   // XIP_NOCACHE_NOALLOC
+        if (cached != direct) bad++;
+    }
+    return bad;
+}
 
 // 放在 RAM（__not_in_flash_func）：當機可能剛好發生在寫 Flash 的時候，那時不能從 Flash 讀程式
 void __attribute__((used)) __not_in_flash_func(hardfault_record)(uint32_t *frame)
@@ -57,6 +81,9 @@ void __attribute__((used)) __not_in_flash_func(hardfault_record)(uint32_t *frame
     crash.pc = frame[6];
     crash.lr = frame[5];
     crash.r0 = frame[0];          // 「沒有處理函式的中斷」時，r0 是那個中斷的編號
+    crash.r1 = frame[1]; crash.r2 = frame[2]; crash.r3 = frame[3]; crash.r12 = frame[4];
+    crash.phase = boot_phase;
+    crash.xip_bad = xip_compare(crash.pc) + xip_compare(crash.lr & ~1u);
     crash.core = *(volatile uint32_t *)(SIO_BASE + 0x000);   // SIO CPUID：哪個核心（0 或 1）
     crash.vtor = scb_hw->vtor;                               // 這個核心當時的中斷向量表位址
     crash.slot = ((volatile uint32_t *)crash.vtor)[16 + (crash.r0 & 63)];   // 表裡那個中斷的處理函式
@@ -120,6 +147,8 @@ void __not_in_flash_func(hang_detected)(uint32_t pc, uint32_t lr)
     crash.core = 0;
     crash.r0 = -1;
     crash.cfsr = 0;
+    crash.phase = boot_phase;
+    crash.xip_bad = 0;
     crash.magic = HANG_MAGIC;
     __asm volatile("dsb");
     scb_hw->aircr = 0x05FA0004u;
@@ -343,12 +372,12 @@ static void log_clocks(const char *when)
     sleep_ms(100);
     uint32_t frames = video_frame_count() - f0, us = time_us_32() - t0;
     char s[160];
-    snprintf(s, sizeof s, "%s: sys %u kHz, hstx %u kHz, peri %u kHz, ref %u kHz, video %u frames in %u ms, hstx csr %08X",
+    snprintf(s, sizeof s, "%s: sys %u kHz, hstx %u kHz, peri %u kHz, ref %u kHz, video %u frames in %u ms, hstx csr %08X, flash timing %08X",
              when, (unsigned)frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS),
              (unsigned)frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_HSTX),
              (unsigned)frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_PERI),
              (unsigned)frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_REF),
-             (unsigned)frames, (unsigned)(us / 1000), (unsigned)hstx_ctrl_hw->csr);
+             (unsigned)frames, (unsigned)(us / 1000), (unsigned)hstx_ctrl_hw->csr, (unsigned)qmi_hw->m[0].timing);
     platform_log(s);
 }
 
@@ -663,6 +692,9 @@ static void nova_main(void)
     // 上次當機了：顯示紀錄，這次不載入 game.nvc
     bool hung = crash.magic == HANG_MAGIC;
     bool crashed = crash.magic == CRASH_MAGIC || hung;
+    // 硬體看門狗重開機（沒有當機紀錄）：主程式整個卡死、連畫面中斷都停了（黑畫面）的那種，見主迴圈
+    bool dog = !crashed && watchdog_enable_caused_reboot() && boot_phase == PHASE_PLAYING;
+    if (dog && sd_ready) sd_log("LAST BOOT: watchdog reset (froze while playing)");
     char crash_text[2][64];
     if (crashed) {
         crash.magic = 0;
@@ -676,9 +708,19 @@ static void nova_main(void)
         snprintf(t, sizeof t, "SLOT %08X DIFF %u FIRST %d DMA %08X", (unsigned)crash.slot,
                  (unsigned)crash.ndiff, (int)crash.firstdiff, (unsigned)crash.dma);
         platform_log(t);
+        snprintf(t, sizeof t, "R1 %08X R2 %08X R3 %08X R12 %08X", (unsigned)crash.r1, (unsigned)crash.r2,
+                 (unsigned)crash.r3, (unsigned)crash.r12);
+        platform_log(t);
+        snprintf(t, sizeof t, "PHASE %s XIP BAD %u", crash.phase == PHASE_PLAYING ? "PLAYING" :
+                 crash.phase == PHASE_LOADING ? "LOADING" : "BOOT", (unsigned)crash.xip_bad);
+        platform_log(t);
     }
 
-    if (crashed) sd_ok = 0;   // 上次當機：這次不載入 SD 卡的遊戲（紀錄檔照寫）
+    // 上次當機：如果是載入途中當的，這次先不載入 SD 卡的遊戲（不然一開機又當）。
+    // 玩到一半當的就照常載入，回到標題畫面可以讀上次的存檔
+    bool crash_while_loading = crashed && crash.phase != PHASE_PLAYING;
+    if (crash_while_loading) sd_ok = 0;
+    boot_phase = PHASE_LOADING;
     // game.nvc 失敗的原因先記下來：後面試 game.lua 時 sd_error() 會被蓋掉，
     // 只顯示「找不到 game.lua」就看不出 game.nvc 是哪裡出問題
     char nvc_why[64] = "";
@@ -713,6 +755,11 @@ static void nova_main(void)
     uint32_t logic_vb = 0, skipped_total = 0, skipped_last = 0;
     uint32_t sum_frames = 0;
     hang_watch = true;
+    boot_phase = PHASE_PLAYING;
+    // 硬體看門狗：主迴圈每幀「餵」一次，超過 8 秒沒餵，晶片自己重開機。
+    // 畫面中斷的卡住偵測（video.c）抓不到「連中斷都停了」的情況（黑畫面、什麼都沒反應），這個抓得到。
+    // 載入時不開：載入要好幾秒、中間沒有地方餵。pause_on_debug：接除錯器暫停時不要重開
+    watchdog_enable(8000, true);
     // （Lua 看門狗 script_set_watch 關掉：它讓 Lua 每 100 個指令就呼叫一次 C，會拖慢遊戲；
     //   卡住偵測改由畫面中斷負責，見 video.c）
     (void)frame_watch;
@@ -728,6 +775,7 @@ static void nova_main(void)
         }
         loops++;
         main_heartbeat++;
+        watchdog_update();
         // 等 HDMI 進入垂直空白期（每秒 60 次）
         while (video_frame_count() == last) __wfe();
         last = video_frame_count();
@@ -735,6 +783,8 @@ static void nova_main(void)
         // 1. 把上一幀畫好的畫面交給 HDMI。空白期約 1.4 ms，複製 76 KB 約 0.5 ms，來得及
         memcpy(video_display_buffer(), gfx_framebuffer(), SCREEN_W * SCREEN_H);
         video_set_palette(gfx_palette());
+        // 玩到一半當機後重新載入：「上次當機」的字只顯示前 10 秒，之後照常玩
+        if (crashed && !crash_while_loading && loops > 600) crashed = false;
         bool overlay = err || script_failed() || show_stats || crashed;
         if (overlay) video_set_color(OVERLAY_COLOR, 0xFF);   // 白色
 

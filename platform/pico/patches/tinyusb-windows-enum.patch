@@ -1,5 +1,5 @@
---- a/src/host/usbh.c	2026-10-23 22:07:02.648219939 +0800
-+++ b/src/host/usbh.c	2026-10-23 22:07:08.053901745 +0800
+--- a/src/host/usbh.c
++++ b/src/host/usbh.c
 @@ -1410,8 +1410,9 @@
  
        // Get first 8 bytes of device descriptor for Control Endpoint size
@@ -21,3 +21,18 @@
                                                   process_enumeration, ENUM_GET_FULL_CONFIG_DESC),);
        break;
      }
+@@ -1542,6 +1543,14 @@
+ 
+   if (_dev0.hub_addr == 0) {
+     // connected directly to roothub
++    // Nova: like Windows (and USB 2.0 spec 7.1.7.3, TATTDB = 100 ms), wait for the connection
++    // to settle before the bus reset. Some receivers re-attach while switching identity and
++    // fall back to their update-mode identity if reset immediately.
++    tusb_time_delay_ms_api(100);
++    if (!hcd_port_connect_status(_dev0.rhport)) {
++      enum_full_complete();
++      return true;
++    }
+     hcd_port_reset(_dev0.rhport);
+ 
+     // Since we are in middle of rhport reset, frame number is not available yet.
