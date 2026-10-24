@@ -34,5 +34,9 @@ const uint8_t *romflash_store(const uint8_t *data, size_t len);
 unsigned romflash_pages_written(void);
 unsigned romflash_sectors_erased(void);
 size_t romflash_used(void);
+unsigned romflash_errors(void);   // flash_safe_execute 失敗的次數（應該是 0）
+
+// 每次真的寫入或擦除之後呼叫（主程式用來更新「載入中」畫面）
+void romflash_set_progress(void (*fn)(void));
 
 #endif

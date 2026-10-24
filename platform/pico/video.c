@@ -241,3 +241,47 @@ void video_start(void)
     bus_ctrl_hw->priority = BUSCTRL_BUS_PRIORITY_DMA_W_BITS | BUSCTRL_BUS_PRIORITY_DMA_R_BITS;
     dma_channel_start(DMACH_PING);
 }
+
+// ---- 寫 Flash 時暫停畫面 ----
+// 為什麼需要：寫 Flash 時（romflash.c 的 flash_safe_execute）這個核心的中斷全部關掉，
+// 擦一個磁區要約 45 ms。這段時間 DMA 送完一段，中斷沒辦法幫它換下一段的位址，
+// DMA 就從上一段的結尾「繼續往後讀」：每一列往後跑 2.5 KB，幾十毫秒就跑出 RAM 的範圍，
+// 讀到不存在的位址 → DMA 出錯停下來，之後中斷恢復也救不回來，HDMI 永遠沒有訊號。
+// （電腦上的 Flash 模擬器沒有 HDMI，所以測不出來；2026-10-24 實機發現）
+// 做法：寫之前把兩個 DMA 通道停掉，寫完從垂直空白期的開頭重新開始送。
+// 電視會短暫失去同步（閃一下或沒訊號），但寫完一定會恢復。
+
+static void stop_channel(uint ch)
+{
+    // 先關掉「完成後觸發另一個通道」：不然停了這個，另一個又把它叫起來
+    hw_clear_bits(&dma_hw->ch[ch].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
+}
+
+void video_pause(void)
+{
+    irq_set_enabled(DMA_IRQ_0, false);
+    stop_channel(DMACH_PING);
+    stop_channel(DMACH_PONG);
+    dma_channel_abort(DMACH_PING);
+    dma_channel_abort(DMACH_PONG);
+    dma_hw->ints0 = (1u << DMACH_PING) | (1u << DMACH_PONG);   // 清掉還沒處理的中斷
+}
+
+void video_resume(void)
+{
+    // HSTX 可能停在一個指令的中間：關掉再打開，從乾淨的狀態開始
+    hw_clear_bits(&hstx_ctrl_hw->csr, HSTX_CTRL_CSR_EN_BITS);
+    hw_set_bits(&hstx_ctrl_hw->csr, HSTX_CTRL_CSR_EN_BITS);
+
+    // 和 video_start 一樣的起點：兩個通道都先送空白期的列，掃描線從 2 開始算
+    dma_pong = false;
+    v_scanline = 2;
+    vactive_cmdlist_posted = false;
+    for (uint ch = DMACH_PING; ch <= DMACH_PONG; ++ch) {
+        dma_hw->ch[ch].read_addr = (uintptr_t)vblank_line_vsync_off;
+        dma_hw->ch[ch].transfer_count = count_of(vblank_line_vsync_off);
+        hw_set_bits(&dma_hw->ch[ch].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
+    }
+    irq_set_enabled(DMA_IRQ_0, true);
+    dma_channel_start(DMACH_PING);
+}

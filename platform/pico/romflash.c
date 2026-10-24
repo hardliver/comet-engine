@@ -16,6 +16,7 @@
 #include "pico/flash.h"
 #include "hardware/flash.h"
 #include "romflash.h"
+#include "video.h"
 
 #define BASE ((char *)(XIP_BASE + ROMFLASH_OFFSET))
 
@@ -23,12 +24,15 @@ static uint8_t page_buf[FLASH_PAGE_SIZE];
 static size_t page_off = (size_t)-1;   // 緩衝區裡是哪一頁（唯讀區內的位移；-1 = 沒有）
 static uint8_t sector_buf[FLASH_SECTOR_SIZE];
 static size_t used;                    // 唯讀區用到哪裡
-static unsigned pages_written, sectors_erased;
+static unsigned pages_written, sectors_erased, flash_errors;
+static void (*progress_fn)(void);
 
 const char *romflash_base(void) { return BASE; }
 size_t romflash_used(void) { return used; }
 unsigned romflash_pages_written(void) { return pages_written; }
 unsigned romflash_sectors_erased(void) { return sectors_erased; }
+unsigned romflash_errors(void) { return flash_errors; }
+void romflash_set_progress(void (*fn)(void)) { progress_fn = fn; }
 
 // ---- 真正動到 Flash 的地方：透過 flash_safe_execute ----
 // flash_safe_execute 會：關掉這個核心的中斷、讓另一個核心（USB）在 RAM 裡等待，
@@ -51,9 +55,14 @@ static void do_flash_op(void *p)
 static void flash_op(int erase, size_t rom_off, const uint8_t *data, size_t len)
 {
     FlashOp op = { erase, (uint32_t)(ROMFLASH_OFFSET + rom_off), data, len };
-    flash_safe_execute(do_flash_op, &op, UINT32_MAX);
+    video_pause();   // 原因見 video.c：中斷關掉時畫面的 DMA 會跑掉
+    // 等另一個核心最多 1 秒；等不到（或其他錯誤）就記下來，顯示在 CART 那一行（FE）
+    int r = flash_safe_execute(do_flash_op, &op, 1000);
+    video_resume();
+    if (r != PICO_OK) flash_errors++;
     if (erase) sectors_erased++;
     else pages_written += (unsigned)(len / FLASH_PAGE_SIZE);
+    if (progress_fn) progress_fn();
 }
 
 // 把一頁（page_buf，位移 off）放進 Flash：一樣就不寫；能直接寫就寫；不行就擦磁區重寫
@@ -146,7 +155,7 @@ void romflash_writer(RomWriter *w)
     w->read = w_read;
     w->ud = NULL;
     page_off = (size_t)-1;
-    pages_written = sectors_erased = 0;
+    pages_written = sectors_erased = flash_errors = 0;
 }
 
 void romflash_finish_build(size_t u)

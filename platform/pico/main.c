@@ -208,6 +208,31 @@ static int rom_loader(lua_State *L, void *ud)
     return LUA_OK;
 }
 
+// ---- 載入中畫面 ----
+// 直接畫在 HDMI 的顯示畫面上（引擎還沒有遊戲可以畫）。寫 Flash 時畫面會閃，
+// 每寫 64 次更新一次數字就夠了，太常重畫只是浪費時間
+static uint32_t loading_t0;
+static unsigned loading_ops;
+
+static void show_loading(void)
+{
+    memset(video_display_buffer(), 0, SCREEN_W * SCREEN_H);   // 0 號色 = 黑
+    video_set_color(0, 0x00);
+    video_set_color(OVERLAY_COLOR, 0xFF);
+    overlay_text(4, 4, "LOADING GAME.NVC");
+    overlay_text(4, 12, "FIRST TIME TAKES ABOUT 30S");
+    char s[64];
+    snprintf(s, sizeof s, "WR %u ER %u FE %u %uS", romflash_pages_written(),
+             romflash_sectors_erased(), romflash_errors(),
+             (unsigned)((time_us_32() - loading_t0) / 1000000));
+    overlay_text(4, 24, s);
+}
+
+static void loading_progress(void)
+{
+    if (++loading_ops % 64 == 0) show_loading();
+}
+
 // 成功回傳 0（*err 是 engine_load 的結果）；找不到或格式不對回傳 1（改用別的卡匣）
 static int load_nvc(const char *path, char *info, size_t info_size, int *err)
 {
@@ -227,6 +252,11 @@ static int load_nvc(const char *path, char *info, size_t info_size, int *err)
         return 1;
     }
 
+    // 「載入中」畫面：第一次裝一款遊戲要寫很久，讓玩家知道主機沒當機
+    loading_t0 = time_us_32();
+    show_loading();
+    romflash_set_progress(loading_progress);
+
     // 建唯讀區：和 Flash 上一樣的部分不寫（同一款遊戲第二次開就很快）。
     // 第一次裝一款大遊戲要寫 1–2 MB，大約 30 秒，這段時間畫面會閃或沒有訊號
     uint32_t t0 = time_us_32();
@@ -239,6 +269,7 @@ static int load_nvc(const char *path, char *info, size_t info_size, int *err)
     sd_stream_close();
     if (r != 0) {
         platform_log(e);
+        romflash_set_progress(NULL);
         free(head);
         snprintf(info, info_size, "GAME.NVC: BUILD FAILED");
         return 1;
@@ -252,11 +283,13 @@ static int load_nvc(const char *path, char *info, size_t info_size, int *err)
     luarom_set_append(romflash_append);
     script_set_loader(rom_loader, NULL);
     *err = engine_load(head, head_len);   // 開頭原始碼：引擎只用來讀遊戲 id
+    // （遊戲最上層的程式在這裡執行：freeze、newimage 也會寫 Flash，所以載入中畫面到這裡才停）
+    romflash_set_progress(NULL);
     free(head);
 
-    snprintf(info, info_size, "CART GAME.NVC ROM %uK+%uK WR %u ER %u %uS",
+    snprintf(info, info_size, "CART GAME.NVC ROM %uK+%uK WR %u ER %u FE %u %uS",
              code_kb, (unsigned)((romflash_used() - w.used) / 1024),
-             romflash_pages_written(), romflash_sectors_erased(),
+             romflash_pages_written(), romflash_sectors_erased(), romflash_errors(),
              (unsigned)((time_us_32() - t0) / 1000000));
     return 0;
 }

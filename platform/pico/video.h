@@ -24,4 +24,9 @@ void video_set_palette(const uint8_t *rgb);
 // 直接指定某個編號送到 HDMI 的顏色（RRRGGGBB）。疊字用，不改遊戲的調色盤
 void video_set_color(int index, uint8_t rgb332);
 
+// 寫 Flash 前後呼叫（romflash.c）：寫 Flash 時中斷會關掉，畫面的 DMA 沒人照顧會跑掉，
+// 所以先停下來，寫完再從頭開始送。電視會閃一下
+void video_pause(void);
+void video_resume(void);
+
 #endif
