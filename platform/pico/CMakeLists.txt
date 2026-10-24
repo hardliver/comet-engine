@@ -64,7 +64,7 @@ target_compile_options(nova PRIVATE -Wall -Wextra)
 
 target_link_libraries(nova
     pico_stdlib pico_multicore
-    hardware_dma hardware_pll hardware_clocks hardware_flash pico_flash
+    hardware_dma hardware_pll hardware_clocks hardware_flash pico_flash hardware_xip_cache
     tinyusb_host tinyusb_board tinyusb_pico_pio_usb
     no-OS-FatFS-SD-SDIO-SPI-RPi-Pico)
 

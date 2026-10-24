@@ -36,6 +36,7 @@
 #include "hardware/sync.h"
 #include "hardware/structs/scb.h"
 #include "hardware/structs/qmi.h"   // Flash 介面的時序設定（診斷用，寫進紀錄）
+#include "hardware/xip_cache.h"
 
 // ============================================================================
 // 當機紀錄（除錯用）
@@ -471,6 +472,40 @@ static void compute_firmware_id(void)
     snprintf(FIRMWARE_ID, sizeof FIRMWARE_ID, "%08X %uK", (unsigned)~crc, (unsigned)(n / 1024));
 }
 
+// ---- Flash 快取巡邏（診斷＋修補）----
+// 2026-10-24 實機：USB 核心當機時，程式碼附近有約 20 個字「從快取讀」和「直接讀 Flash」不一樣，
+// 而且三次當機讀到的錯誤值都是同一個 0x0718FE84：CPU 執行到的是快取裡壞掉的內容，Flash 本身沒壞。
+// 原因還沒查到。先做巡邏：每一幀檢查韌體的 2 KB，從快取讀和直接讀 Flash 比對；
+// 不一樣就記進紀錄（位址、兩邊的值），然後把那一小段快取作廢，CPU 下次會重新從 Flash 讀正確的內容。
+// 整個韌體（約 360 KB）大約 3 秒巡一輪。每幀約 0.3 ms。
+static unsigned xip_fixed;   // 這次開機修好幾次（alive 那一行會印）
+
+static void xip_patrol(void)
+{
+    static uint32_t off;
+    static unsigned logged;
+    uint32_t end = (uint32_t)((uintptr_t)&__flash_binary_end - XIP_BASE);
+    for (int i = 0; i < 2048 / 4; ++i, off += 4) {
+        if (off >= end) off = 0;
+        volatile uint32_t *cached = (volatile uint32_t *)(XIP_BASE + off);
+        volatile uint32_t *direct = (volatile uint32_t *)(XIP_NOCACHE_NOALLOC_BASE + off);
+        uint32_t c = *cached;
+        if (c == *direct) continue;
+        uint32_t d = *direct;
+        // 作廢這一行快取（8 bytes 對齊），再讀一次確認修好了
+        xip_cache_invalidate_range(off & ~7u, 8);
+        uint32_t c2 = *cached;
+        xip_fixed++;
+        if (logged < 30 && sd_ready) {
+            logged++;
+            char s[96];
+            snprintf(s, sizeof s, "XIP MISMATCH at %08X: cache %08X flash %08X, after fix %08X",
+                     (unsigned)(XIP_BASE + off), (unsigned)c, (unsigned)d, (unsigned)c2);
+            sd_log(s);
+        }
+    }
+}
+
 // 成功回傳 0（*err 是 engine_load 的結果）；找不到或格式不對回傳 1（改用別的卡匣）
 //
 // 流程：
@@ -840,6 +875,8 @@ static void nova_main(void)
         combo_frames = ((held & combo) == combo) ? combo_frames + 1 : 0;
         if (combo_frames == 60) show_stats = !show_stats;
 
+        xip_patrol();
+
         // USB 事件（手把插上、拔掉、看門狗）寫進紀錄檔：一幀最多 2 筆，不拖慢遊戲
         if (sd_ready) {
             char s[64];
@@ -852,13 +889,13 @@ static void nova_main(void)
             next_alive_ms += 10000;
             char s[160];
             unsigned nf = sum_frames ? sum_frames : 1;
-            snprintf(s, sizeof s, "alive: %u fps drawn + %u skipped, avg ms: update %u.%u draw %u.%u audio %u.%u, stack %u/%u, heap %uK, lua %uK%s",
+            snprintf(s, sizeof s, "alive: %u fps drawn + %u skipped, avg ms: update %u.%u draw %u.%u audio %u.%u, stack %u/%u, heap %uK, lua %uK, xip fixed %u%s",
                      (unsigned)(sum_frames / 10), (unsigned)((skipped_total - skipped_last) / 10),
                      (unsigned)(sum_update / nf / 1000), (unsigned)(sum_update / nf % 1000 / 100),
                      (unsigned)(sum_draw / nf / 1000), (unsigned)(sum_draw / nf % 1000 / 100),
                      (unsigned)(sum_audio / nf / 1000), (unsigned)(sum_audio / nf % 1000 / 100),
                      main_stack_free(), usb_pad_stack_free(),
-                     heap_used() / 1024, (unsigned)(script_mem() / 1024), script_failed() ? ", LUA ERROR" : "");
+                     heap_used() / 1024, (unsigned)(script_mem() / 1024), xip_fixed, script_failed() ? ", LUA ERROR" : "");
             sd_log(s);
             sum_update = sum_draw = sum_audio = 0;
             sum_frames = 0;
