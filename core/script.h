@@ -25,6 +25,11 @@ void script_set_loader(ScriptLoader loader, void *ud);
 // 設定下一次 script_load() 時 rnd() 的亂數種子（0 會被換成 1）
 void script_set_seed(uint32_t seed);
 
+// 遊戲已經在跑：馬上換掉亂數的狀態（主機用：載入時用固定種子，載入後才換成隨機的。
+// 這樣載入時放進 Flash 的東西每次開機都一樣，不用重寫；見 platform/pico/main.c）。
+// 注意：重播檔只記載入時的種子，用了這個就不能重播
+void script_reseed(uint32_t seed);
+
 // 只編譯、不執行：檢查語法。用一個暫時的 Lua 環境，不影響正在執行的遊戲。
 // 沒錯回傳 0；有錯回傳 1，錯誤訊息寫進 err（最多 err_size byte，含結尾的 0）
 int script_check(const char *src, size_t len, const char *name, char *err, size_t err_size);
@@ -50,5 +55,10 @@ int script_eval(const char *src, size_t len, int mode, char *out, size_t cap);
 extern uint32_t script_instr;
 extern uint32_t script_draw_calls;
 void script_profile(int on);
+
+// 平台的看門狗（主機除錯用）：Lua 每執行 every_instr 個指令，呼叫 fn 一次，告訴它現在在哪一行
+// （例如 "game:1234"）。平台可以用來發現「一幀跑太久、卡在哪裡」
+typedef void (*ScriptWatch)(const char *where);
+void script_set_watch(ScriptWatch fn, unsigned every_instr);
 
 #endif

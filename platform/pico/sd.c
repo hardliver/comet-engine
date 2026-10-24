@@ -13,6 +13,7 @@
 #include "f_util.h"
 #include "ff.h"
 #include "sd.h"
+#include "pico/stdlib.h"
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
 
@@ -67,6 +68,7 @@ int sd_mount(void)
 // luarom 讀位元組碼時常常一次只要 1 byte；每次都呼叫 FatFs 太慢，所以自己多一層 512 bytes 的緩衝
 
 static FIL stream;
+uint32_t sd_read_us;   // 診斷：讀 SD 累計花了多少微秒
 static uint8_t sbuf[512];
 static UINT sbuf_len, sbuf_pos;
 
@@ -87,7 +89,10 @@ int sd_stream_read(void *ud, void *dst, size_t n)
     uint8_t *d = dst;
     while (n > 0) {
         if (sbuf_pos == sbuf_len) {
-            if (f_read(&stream, sbuf, sizeof sbuf, &sbuf_len) != FR_OK || sbuf_len == 0) return 1;
+            uint32_t t0 = time_us_32();
+            FRESULT fr = f_read(&stream, sbuf, sizeof sbuf, &sbuf_len);
+            sd_read_us += time_us_32() - t0;
+            if (fr != FR_OK || sbuf_len == 0) return 1;
             sbuf_pos = 0;
         }
         UINT k = sbuf_len - sbuf_pos;
@@ -101,6 +106,34 @@ int sd_stream_read(void *ud, void *dst, size_t n)
 void sd_stream_close(void)
 {
     f_close(&stream);
+}
+
+// ---- 紀錄檔 nova_log.txt ----
+// 主機沒有螢幕可看（例如畫面出不來）的時候，在電腦上打開 SD 卡的這個檔案，就知道開機走到哪一步。
+// 每一行寫完馬上 f_sync（真的寫到卡上）：之後當機或斷電，寫過的行也不會不見
+static FIL logf;
+static int log_open;
+
+void sd_log(const char *line)
+{
+    if (!log_open) {
+        if (f_open(&logf, "nova_log.txt", FA_OPEN_APPEND | FA_WRITE) != FR_OK) return;
+        // 太大（超過 64 KB）：舊的改名成 nova_log_old.txt，從新檔開始寫（上一次開機的紀錄還留著）
+        if (f_size(&logf) > 64 * 1024) {
+            f_close(&logf);
+            f_unlink("nova_log_old.txt");
+            f_rename("nova_log.txt", "nova_log_old.txt");
+            if (f_open(&logf, "nova_log.txt", FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return;
+        }
+        log_open = 1;
+    }
+    char stamp[16];
+    unsigned ms = to_ms_since_boot(get_absolute_time());
+    snprintf(stamp, sizeof stamp, "%6u.%03u ", ms / 1000, ms % 1000);   // 開機後幾秒
+    f_puts(stamp, &logf);
+    f_puts(line, &logf);
+    f_puts("\n", &logf);
+    f_sync(&logf);
 }
 
 size_t sd_stream_pos(void)

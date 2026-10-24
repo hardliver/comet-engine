@@ -24,9 +24,19 @@ void video_set_palette(const uint8_t *rgb);
 // 直接指定某個編號送到 HDMI 的顏色（RRRGGGBB）。疊字用，不改遊戲的調色盤
 void video_set_color(int index, uint8_t rgb332);
 
+// 寫 Flash 前後呼叫（romflash.c）：整個停掉、寫完從頭開始送。停的時候電視沒有訊號
+#include <stdbool.h>
+void video_stop(void);
+void video_restart(void);
+bool video_running(void);
+
 // 畫面用到的兩個中斷：DMA_IRQ_0 和這個軟體中斷。寫 Flash 時只留這兩個（romflash.c），
 // 它們的程式都在 RAM，Flash 暫停時也能跑，所以畫面不會斷
 #include "pico/types.h"
 uint video_convert_irq(void);
+extern volatile uint32_t video_irq_count;
+extern volatile uint32_t main_heartbeat;   // 診斷：主程式每幀加 1（卡住偵測）
+extern volatile bool hang_watch;   // 診斷用
+extern volatile uint32_t video_resyncs;     // 診斷：DMA 對不上、重新同步的次數
 
 #endif

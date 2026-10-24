@@ -16,6 +16,7 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "pico/flash.h"
+#include "hardware/structs/scb.h"
 #include "tusb.h"
 #include "pio_usb.h"
 #include "xinput_host.h"
@@ -329,11 +330,30 @@ void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance,
 // 第二個核心
 // ============================================================================
 
+// 第二個核心的堆疊：8 KB，放在一般 RAM。
+// SDK 預設只給 2 KB、放在 scratch 記憶體，旁邊就是 HDMI 的中斷程式。
+// 2026-10-23：USB 這邊呼叫一深（例如算 Switch 震動用的 log2f），堆疊溢出蓋掉 HDMI 的程式，
+// 結果畫面全黑、手把一直震。
+static uint32_t core1_stack[4 * 1024 / 4];   // 4 KB：2026-10-24 實測最多用約 600 bytes
+
+unsigned usb_pad_stack_free(void)
+{
+    size_t i = 0;
+    while (i < count_of(core1_stack) && core1_stack[i] == 0x5A5A5A5Au) ++i;
+    return (unsigned)(i * 4);
+}
+
+uint32_t usb_core_vtor;              // 診斷：這個核心的中斷向量表在哪裡
+
 static void core1_main(void)
 {
-    // 讓另一個核心寫 Flash 時可以叫這個核心暫停（romflash.c 的 multicore_lockout）：
+    usb_core_vtor = scb_hw->vtor;
+    // 讓另一個核心寫 Flash 時可以叫這個核心暫停（romflash.c 的 flash_safe_execute）：
     // 寫 Flash 的時候不能從 Flash 讀程式，這個核心的程式也在 Flash 上
-    multicore_lockout_victim_init();
+    flash_safe_execute_core_init();
+    // 堆疊下限：用超過 core1_stack 的底部就立刻出錯（見 main.c 的 run_on_big_stack）
+    __asm volatile ("msr msplim, %0" : : "r"(&core1_stack[0]));
+
 
     pio_usb_configuration_t cfg = PIO_USB_DEFAULT_CONFIG;
     cfg.pin_dp = 10;   // GP10 = D+，GP11 = D-（PIO-USB 規定 D- = D+ 的下一支）
@@ -341,6 +361,9 @@ static void core1_main(void)
     tuh_configure(BOARD_TUH_RHPORT, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &cfg);
     tuh_init(BOARD_TUH_RHPORT);
     ready = true;   // PIO-USB 已經登記了 DMA 通道 2
+    // 這個核心的中斷都登記好了：把向量表設成唯讀（診斷，見 main.c 的 protect_vector_table）
+    extern void protect_vector_table(void);
+    protect_vector_table();
 
     uint8_t sent_s = 0, sent_w = 0;
     uint32_t last_send = 0;
@@ -368,14 +391,9 @@ static void core1_main(void)
     }
 }
 
-// 第二個核心的堆疊：8 KB，放在一般 RAM。
-// SDK 預設只給 2 KB、放在 scratch 記憶體，旁邊就是 HDMI 的中斷程式。
-// 2026-10-23：USB 這邊呼叫一深（例如算 Switch 震動用的 log2f），堆疊溢出蓋掉 HDMI 的程式，
-// 結果畫面全黑、手把一直震。
-static uint32_t core1_stack[8 * 1024 / 4];
-
 void usb_pad_start(void)
 {
     pad_clear();
+    for (size_t i = 0; i < count_of(core1_stack); ++i) core1_stack[i] = 0x5A5A5A5Au;   // 量堆疊用量用
     multicore_launch_core1_with_stack(core1_main, core1_stack, sizeof(core1_stack));
 }

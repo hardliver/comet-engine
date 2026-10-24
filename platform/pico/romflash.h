@@ -63,4 +63,8 @@ unsigned romflash_erases(void);
 unsigned romflash_errors(void);
 size_t romflash_used(void);
 
+// 遊戲載入完成後呼叫：之後的接在後面寫都回傳 NULL（不再寫 Flash，圖片、地圖改放 RAM）
+void romflash_lock(void);
+void romflash_timing(uint32_t *lock_us, uint32_t *op_us, uint32_t *unlock_us);   // 診斷用
+
 #endif

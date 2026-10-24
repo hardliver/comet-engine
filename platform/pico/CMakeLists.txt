@@ -55,7 +55,8 @@ target_include_directories(nova PRIVATE
 target_compile_definitions(nova PRIVATE
     LUA_USER_H="comet_lua_user.h"
     PICO_USE_MALLOC_MUTEX=1              # 兩個核心都可能 malloc
-    COMET_GC_PAUSE=120                   # RAM 少：記憶體長到 1.2 倍就回收垃圾（Lua 預設 2 倍）
+    COMET_GC_PAUSE=110                   # RAM 少：記憶體長到 1.1 倍就回收垃圾（Lua 預設 2 倍）。
+                                         # 2026-10-24 Wildkin 量測（32 位元）：120 → 110 最高用量少約 20 KB，速度幾乎不變；100 會慢 3 倍
     COMET_EVAL_MAX=256                   # 主機沒有 Studio 除錯，結果緩衝不用 16 KB
     SYSTEM_MAX_GAMES=16)                 # 主選單之後做；先不用放 64 款遊戲的清單
 

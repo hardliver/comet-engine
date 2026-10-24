@@ -11,9 +11,7 @@
 
 #include <string.h>
 #include "pico/stdlib.h"
-#include "pico/multicore.h"
-#include "hardware/structs/nvic.h"
-#include "hardware/sync.h"
+#include "pico/flash.h"
 #include "hardware/flash.h"
 #include "romflash.h"
 #include "video.h"
@@ -42,6 +40,7 @@ static int installing;                 // 1 = 這次開機在安裝
 static size_t erased_end;              // 安裝時：唯讀區從開頭擦到哪裡了（整個唯讀區的位移）
 static unsigned pages_written, erases, flash_errors;
 static void (*progress_fn)(void);
+static uint32_t t_lock, t_op, t_unlock;   // 診斷：寫 Flash 各步驟累計花了多少微秒
 
 const char *romflash_base(void) { return DATA; }
 size_t romflash_capacity(void) { return DATA_SIZE; }
@@ -49,52 +48,47 @@ size_t romflash_used(void) { return used; }
 unsigned romflash_pages_written(void) { return pages_written; }
 unsigned romflash_erases(void) { return erases; }
 unsigned romflash_errors(void) { return flash_errors; }
+void romflash_timing(uint32_t *lock, uint32_t *op, uint32_t *unlock) { *lock = t_lock; *op = t_op; *unlock = t_unlock; }
 void romflash_set_progress(void (*fn)(void)) { progress_fn = fn; }
 
 // ---- 真正動到 Flash 的地方 ----
-// 寫 Flash（擦除、寫入）時，Flash 暫時不能讀，而 CPU 平常的程式都在 Flash 上。所以：
-//   1. 另一個核心（USB）要先停下來，在 RAM 裡等（multicore_lockout）
-//   2. 這個核心的中斷要關掉，不然中斷函式在 Flash 上就會當機
-//   3. 擦除、寫入的函式本身（SDK 的 flash_range_*）放在 RAM
+// 寫 Flash（擦除、寫入）時，Flash 暫時不能讀，而 CPU 平常的程式都在 Flash 上。
+// SDK 的 flash_safe_execute 處理這些：關掉這個核心的中斷、讓另一個核心（USB）在 RAM 裡等，再呼叫我們的函式。
 //
-// 第 2 點的例外：HDMI 畫面的兩個中斷。它們的程式放在 RAM（video.c 的 __scratch_x），
-// 也只讀寫 RAM，所以 Flash 暫停時也能跑。保留它們，畫面就不會斷。
-// （SDK 的 flash_safe_execute 會把中斷「全部」關掉：擦一個磁區約 45 ms，
-//  畫面的 DMA 沒人換位址就一路讀出 RAM 範圍停住，HDMI 從此沒有訊號。2026-10-24 實機發現）
+// 畫面：寫之前整個停掉，寫完從頭開始（原因見 video.c 的 video_stop）。
+// 安裝時主程式會先把畫面停掉，整個安裝完才打開（不然每寫一頁電視就要重新同步一次）。
 
-// RP2350 有 52 個中斷，NVIC 用兩個 32 位元的字記哪些開著
-#define NVIC_WORDS 2
+typedef struct {
+    int erase;            // 1 = 擦除；0 = 寫入
+    uint32_t flash_off;   // 從 Flash 開頭算的位移
+    const uint8_t *data;
+    size_t len;
+} FlashOp;
+
+
+static void do_flash_op(void *p)
+{
+    FlashOp *op = p;
+    if (op->erase) flash_range_erase(op->flash_off, op->len);
+    else flash_range_program(op->flash_off, op->data, op->len);
+}
 
 // region_off：整個唯讀區內的位移（0 = 安裝紀錄）。erase = 1 時 len 是擦除的大小
 static void flash_op(int erase, size_t region_off, const uint8_t *data, size_t len)
 {
-    uint32_t flash_off = (uint32_t)(ROMFLASH_OFFSET + region_off);
-
-    // 1. 請另一個核心停下來（最多等 1 秒；等不到就記成錯誤 FE，不寫）
-    if (!multicore_lockout_start_timeout_us(1000 * 1000)) {
-        flash_errors++;
-        return;
-    }
-
-    // 2. 只留畫面的兩個中斷：先記下現在開著哪些，關掉其他的
-    uint32_t keep[NVIC_WORDS] = {0};
-    uint irqs[2] = { DMA_IRQ_0, video_convert_irq() };
-    for (int i = 0; i < 2; ++i) keep[irqs[i] / 32] |= 1u << (irqs[i] % 32);
-    uint32_t saved[NVIC_WORDS];
-    for (int i = 0; i < NVIC_WORDS; ++i) {
-        saved[i] = nvic_hw->iser[i];                // 讀 ISER = 目前開著的中斷
-        nvic_hw->icer[i] = saved[i] & ~keep[i];     // 寫 ICER 的 bit = 關掉那個中斷
-    }
-    __dsb();   // 確定關掉了才往下（處理器可能還沒做完前面的寫入）
-    __isb();
-
-    // 3. 擦除或寫入（這兩個函式在 RAM）
-    if (erase) flash_range_erase(flash_off, len);
-    else flash_range_program(flash_off, data, len);
-
-    // 4. 恢復
-    for (int i = 0; i < NVIC_WORDS; ++i) nvic_hw->iser[i] = saved[i];   // 寫 ISER 的 bit = 打開
-    multicore_lockout_end_timeout_us(1000 * 1000);
+    FlashOp op = { erase, (uint32_t)(ROMFLASH_OFFSET + region_off), data, len };
+    uint32_t t0 = time_us_32();
+    bool was_running = video_running();
+    if (was_running) video_stop();
+    uint32_t t1 = time_us_32();
+    // 等另一個核心最多 1 秒；等不到（或其他錯誤）就記成 FE
+    int r = flash_safe_execute(do_flash_op, &op, 1000);
+    uint32_t t2 = time_us_32();
+    if (was_running) video_restart();
+    t_lock += t1 - t0;
+    t_op += t2 - t1;
+    t_unlock += time_us_32() - t2;
+    if (r != PICO_OK) flash_errors++;
 
     if (erase) erases++;
     else pages_written++;
@@ -256,8 +250,15 @@ void romflash_finish_install(const RomId *id, const void *root)
 // ---- 接在後面寫：圖片、字型、地圖、凍結的表格 ----
 // 寫完馬上沖進 Flash：呼叫的人拿到位址就會開始讀
 
+// 遊戲開始玩之後不再寫 Flash（romflash_lock）：寫 Flash 要暫停 USB 核心、停掉畫面，
+// 而且 2026-10-24 實機：玩到一半寫 Flash 時 USB 核心當機（CORE 1 R0 25），原因還沒查清楚。
+// 之後要放的圖片、地圖改放 RAM（gfx、map 拿到 NULL 會自己改用 malloc）
+static int locked;
+void romflash_lock(void) { flush_page(); locked = 1; }
+
 void *romflash_append(const void *data, size_t len, size_t align)
 {
+    if (locked) return NULL;
     size_t at = (used + align - 1) / align * align;
     if (at + len > DATA_SIZE) return NULL;
     // 對齊補的空位寫 0，和上次開機寫的一模一樣，才會被判斷成「不用寫」

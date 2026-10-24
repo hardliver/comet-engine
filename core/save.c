@@ -29,7 +29,15 @@ static char game_id[ID_MAX + 1] = "_";
 static int warned_no_id = 0;
 
 // 編碼、解碼共用的緩衝區。放在這裡而不是堆疊上：Pico 的堆疊很小
-static unsigned char io[SAVE_MAX];
+// 編碼、解碼用的緩衝區（SAVE_MAX = 16 KB）。
+// 不用固定的陣列：主機 RAM 很少，16 KB 一直佔著很浪費。每次 save／loadsave 才向 Lua 要一塊
+// userdata 當緩衝區（io_alloc），用完沒人參照，GC 會回收；中途出錯（luaL_error）也不會漏掉
+static unsigned char *io;
+
+static void io_alloc(lua_State *L)
+{
+    io = lua_newuserdatauv(L, SAVE_MAX, 0);   // 放在 Lua 堆疊最上面，這個函式回傳前都不會被回收
+}
 
 // ============================================================
 // 遊戲 id
@@ -329,6 +337,7 @@ static int l_save(lua_State *L)
         slot_write(slot, NULL, 0);
         return 0;
     }
+    io_alloc(L);
     Writer w = { L, 0 };
     put(&w, SAVE_FORMAT);
     put_value(&w, 2, 0);
@@ -340,6 +349,7 @@ static int l_save(lua_State *L)
 static int l_loadsave(lua_State *L)
 {
     int slot = check_slot(L);
+    io_alloc(L);
     int n = slot_read(slot);
     if (n <= 0) {
         lua_pushnil(L);

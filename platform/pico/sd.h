@@ -25,6 +25,10 @@ size_t sd_stream_size(void);   // 檔案大小
 // 檔案的身分（判斷 Flash 上裝的是不是這個檔）：大小、修改時間、開頭 64 KB 的 CRC32。成功回傳 0
 int sd_fingerprint(const char *path, uint32_t *size, uint32_t *stamp, uint32_t *crc);
 
+// 在 SD 卡的 nova_log.txt 加一行（前面自動加上開機後的秒數）。要先 sd_mount 成功
+void sd_log(const char *line);
+extern uint32_t sd_read_us;   // 診斷用
+
 // 最後一次錯誤的說明（給畫面顯示）
 const char *sd_error(void);
 

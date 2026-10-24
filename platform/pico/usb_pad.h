@@ -31,4 +31,9 @@ void usb_pad_get(PadState *out);
 // 震動：strong = 大馬達、weak = 小馬達，0–255。不支援震動的手把就不做事
 void usb_pad_rumble(uint8_t strong, uint8_t weak);
 
+unsigned usb_pad_stack_free(void);
+
+#include <stdint.h>
+extern uint32_t usb_core_vtor;   // 診斷：USB 核心的中斷向量表位址   // 診斷：第二核心的堆疊還剩多少（bytes）
+
 #endif

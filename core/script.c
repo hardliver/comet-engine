@@ -47,16 +47,42 @@ uint32_t script_draw_calls = 0;
 static int profiling = 0;
 #define HOOK_EVERY 100   // 每 100 個 Lua 指令叫一次 hook（每個指令都叫太慢）
 
+static ScriptWatch watch_fn = NULL;
+static unsigned watch_every = 0, watch_count = 0;
+
 static void count_hook(lua_State *L, lua_Debug *ar)
 {
-    (void)L; (void)ar;
     script_instr += HOOK_EVERY;
+    // 平台的「看門狗」：每 watch_every 次 hook 告訴平台遊戲現在執行到哪一行
+    if (watch_fn != NULL && ++watch_count >= watch_every) {
+        watch_count = 0;
+        char where[96];
+        if (lua_getinfo(L, "Sl", ar))
+            snprintf(where, sizeof where, "%s:%d", ar->short_src, ar->currentline);
+        else
+            snprintf(where, sizeof where, "?");
+        watch_fn(where);
+    }
+}
+
+static void install_hook(void)
+{
+    int on = profiling || watch_fn != NULL;
+    if (L != NULL) lua_sethook(L, on ? count_hook : NULL, on ? LUA_MASKCOUNT : 0, HOOK_EVERY);
 }
 
 void script_profile(int on)
 {
     profiling = on;
-    if (L != NULL) lua_sethook(L, on ? count_hook : NULL, on ? LUA_MASKCOUNT : 0, HOOK_EVERY);
+    install_hook();
+}
+
+void script_set_watch(ScriptWatch fn, unsigned every_instr)
+{
+    watch_fn = fn;
+    watch_every = every_instr / HOOK_EVERY;
+    if (watch_every == 0) watch_every = 1;
+    install_hook();
 }
 
 #define DRAW_CALL() (script_draw_calls++)
@@ -130,6 +156,11 @@ static uint32_t load_seed = 1;   // 下一次載入遊戲時的種子
 void script_set_seed(uint32_t seed)
 {
     load_seed = seed ? seed : 1;   // xorshift 的狀態是 0 的話會永遠是 0
+}
+
+void script_reseed(uint32_t seed)
+{
+    rng_state = seed ? seed : 1;
 }
 
 static uint32_t rng_next(void)
@@ -596,7 +627,7 @@ int script_load(const char *src, size_t len, const char *name, int is_system)
     // 主機 RAM 很少，設低一點（例如 120），代價是多花一點時間回收
     lua_gc(L, LUA_GCINC, COMET_GC_PAUSE, 0, 0);
 #endif
-    script_profile(profiling);   // 新的 Lua 環境：hook 要重新裝
+    install_hook();   // 新的 Lua 環境：hook 要重新裝
 
     // 編譯原始碼。"t" 代表只接受文字，不接受預先編譯好的二進位檔（比較安全）。
     // 平台設了 loader（主機：程式已經在唯讀區）就改用它
