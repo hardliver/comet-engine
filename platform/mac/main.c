@@ -437,6 +437,7 @@ static int run_system(const char *sys_path, const char *out,
 
 #define NVC_MAGIC "NOVACART"
 #define NVC_HEAD_LINES 10
+#define NVC_HEAD_MAX   4096   // 主機那邊也檢查同一個上限（platform/pico/main.c 的 load_nvc）
 
 static int write_out(void *ud, const void *p, size_t n)
 {
@@ -447,10 +448,16 @@ static int compile_nvc(const char *src, size_t len, const char *out_path)
 {
     FILE *f = fopen(out_path, "wb");
     if (f == NULL) { printf("寫不出 %s\n", out_path); return 1; }
-    // 開頭幾行
+    // 開頭幾行（最多 NVC_HEAD_LINES 行、NVC_HEAD_MAX bytes）。
+    // 一次加一整行，加了會超過上限就停：大遊戲開頭常有一行很長的資料（例如 Wildkin 的字型約 60 KB），
+    // 主機要把開頭整段放進 RAM，不能讓它變大
     size_t head = 0;
-    for (int line = 0; line < NVC_HEAD_LINES && head < len; ) {
-        if (src[head++] == '\n') line++;
+    for (int line = 0; line < NVC_HEAD_LINES && head < len; ++line) {
+        size_t end = head;
+        while (end < len && src[end] != '\n') end++;
+        if (end < len) end++;   // 包含換行
+        if (end > NVC_HEAD_MAX) break;
+        head = end;
     }
     uint32_t h32 = (uint32_t)head;
     fwrite(NVC_MAGIC, 1, 8, f);

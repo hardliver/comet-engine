@@ -308,20 +308,30 @@ static void nova_main(void)
     //   SD 卡的 game.nvc（預先編譯好的，程式放 Flash：大遊戲用這個）
     //   SD 卡的 game.lua（原始碼，整個放 RAM：小遊戲）
     //   韌體內建的卡匣
-    char cart_info[64];
+    char cart_info[64] = "";
     int err;
     char *sd_src = NULL;
     size_t sd_len = 0;
     int sd_ok = sd_mount() == 0;
+    // game.nvc 失敗的原因先記下來：後面試 game.lua 時 sd_error() 會被蓋掉，
+    // 只顯示「找不到 game.lua」就看不出 game.nvc 是哪裡出問題
+    char nvc_why[64] = "";
     if (sd_ok && load_nvc("game.nvc", cart_info, sizeof cart_info, &err) == 0) {
         // 已經載入
-    } else if (sd_ok && sd_read_file("game.lua", &sd_src, &sd_len) == 0) {
-        err = engine_load(sd_src, sd_len);
-        free(sd_src);   // 引擎已經把需要的東西複製走了（編譯好的程式、遊戲 id），原始碼可以丟掉
-        snprintf(cart_info, sizeof cart_info, "CART SD GAME.LUA %uK", (unsigned)(sd_len / 1024));
     } else {
-        err = engine_load(cart_src, cart_len);
-        snprintf(cart_info, sizeof cart_info, "CART BUILT-IN (%s)", sd_error());
+        if (sd_ok) {
+            // load_nvc 失敗時，cart_info 裡是原因（BAD FILE 等）；打不開檔案時原因在 sd_error()
+            snprintf(nvc_why, sizeof nvc_why, "%s", cart_info[0] ? cart_info : sd_error());
+            platform_log(nvc_why);
+        }
+        if (sd_ok && sd_read_file("game.lua", &sd_src, &sd_len) == 0) {
+            err = engine_load(sd_src, sd_len);
+            free(sd_src);   // 引擎已經把需要的東西複製走了（編譯好的程式、遊戲 id），原始碼可以丟掉
+            snprintf(cart_info, sizeof cart_info, "CART SD GAME.LUA %uK", (unsigned)(sd_len / 1024));
+        } else {
+            err = engine_load(cart_src, cart_len);
+            snprintf(cart_info, sizeof cart_info, "CART BUILT-IN (%s)", sd_error());
+        }
     }
     unsigned heap_after_load = heap_used();
 
