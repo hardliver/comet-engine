@@ -37,6 +37,9 @@
 #include "hardware/structs/scb.h"
 #include "hardware/structs/qmi.h"   // Flash 介面的時序設定（診斷用，寫進紀錄）
 #include "hardware/xip_cache.h"
+#include "hardware/structs/psm.h"
+#include "hardware/structs/watchdog.h"
+#include "hardware/structs/powman.h"   // 上次是怎麼重開機的（電壓不足、看門狗……）
 
 // ============================================================================
 // 當機紀錄（除錯用）
@@ -82,6 +85,17 @@ static uint32_t __not_in_flash_func(xip_compare)(uint32_t addr)
     return bad;
 }
 
+// 重新開機（當機、卡住之後）：用看門狗「立刻觸發」，整顆晶片（除了時脈振盪器）都重設。
+// 2026-10-24 實機：原本用 AIRCR 的 SYSRESETREQ（只重設 CPU 那一塊），當機後的那次開機
+// 每次都卡在載入、要等看門狗再重開一次才好——Flash 介面沒有被完整重設。RAM 的內容一樣會保留。
+static void __not_in_flash_func(nova_full_reset)(void)
+{
+    psm_hw->wdsel = PSM_WDSEL_BITS & ~(PSM_WDSEL_ROSC_BITS | PSM_WDSEL_XOSC_BITS);
+    __asm volatile("dsb");
+    watchdog_hw->ctrl = WATCHDOG_CTRL_TRIGGER_BITS;
+    while (1) {}
+}
+
 // 放在 RAM（__not_in_flash_func）：當機可能剛好發生在寫 Flash 的時候，那時不能從 Flash 讀程式
 void __attribute__((used)) __not_in_flash_func(hardfault_record)(uint32_t *frame)
 {
@@ -122,10 +136,7 @@ void __attribute__((used)) __not_in_flash_func(hardfault_record)(uint32_t *frame
         crash.stack0 = i * 4;
     }
     crash.magic = CRASH_MAGIC;
-    // 重新開機：寫 AIRCR 的 SYSRESETREQ（0x05FA 是規定的「鑰匙」，不對就不理）。RAM 的內容會保留
-    __asm volatile("dsb");
-    scb_hw->aircr = 0x05FA0004u;
-    while (1) {}
+    nova_full_reset();
 }
 
 // ---- 保護中斷向量表（診斷）----
@@ -189,9 +200,7 @@ void __not_in_flash_func(hang_detected)(uint32_t pc, uint32_t lr)
     crash.phase = boot_phase;
     crash.xip_bad = 0;
     crash.magic = HANG_MAGIC;
-    __asm volatile("dsb");
-    scb_hw->aircr = 0x05FA0004u;
-    while (1) {}
+    nova_full_reset();
 }
 
 // naked：編譯器不要自己加進出函式的程式。只做一件事：找出存暫存器的那個堆疊，交給上面的 C 函式。
@@ -748,6 +757,17 @@ static void nova_main(void)
                  (unsigned)usb_core_vtor, (unsigned)((uint32_t *)scb_hw->vtor)[41]);
         sd_log(s);
         log_clocks("boot");
+        {   // 上次為什麼重開機（RP2350 的 POWMAN 記錄）：BOR = 電壓太低（掉電），POR = 剛接上電源
+            uint32_t r = powman_hw->chip_reset;
+            snprintf(s, sizeof s, "reset reason %08X:%s%s%s%s%s%s", (unsigned)r,
+                     (r & POWMAN_CHIP_RESET_HAD_POR_BITS) ? " power-on" : "",
+                     (r & POWMAN_CHIP_RESET_HAD_BOR_BITS) ? " BROWNOUT(voltage dropped)" : "",
+                     (r & POWMAN_CHIP_RESET_HAD_RUN_LOW_BITS) ? " run-pin" : "",
+                     (r & POWMAN_CHIP_RESET_HAD_GLITCH_DETECT_BITS) ? " GLITCH" : "",
+                     (r & (POWMAN_CHIP_RESET_HAD_WATCHDOG_RESET_PSM_BITS | POWMAN_CHIP_RESET_HAD_WATCHDOG_RESET_SWCORE_BITS)) ? " watchdog" : "",
+                     (r & POWMAN_CHIP_RESET_HAD_HZD_SYS_RESET_REQ_BITS) ? " sysreset" : "");
+            sd_log(s);
+        }
         protect_vector_table();
     }
 
